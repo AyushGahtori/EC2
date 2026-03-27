@@ -1,0 +1,40 @@
+# Nginx reverse proxy for agents
+# Place in /etc/nginx/sites-available/agents
+# Then ln -s /etc/nginx/sites-available/agents /etc/nginx/sites-enabled/
+# Run certbot --nginx for SSL
+
+upstream teams_agent {
+    server 127.0.0.1:8100;
+}
+
+upstream todo_agent {
+    server 127.0.0.1:8200;
+}
+
+server {
+    listen 80;
+    server_name teams.yourdomain.com;
+
+    location / {
+        proxy_pass http://teams_agent;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name todo.yourdomain.com;
+
+    location / {
+        proxy_pass http://todo_agent;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# After certbot, it will add SSL blocks

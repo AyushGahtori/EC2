@@ -1,0 +1,17 @@
+[Unit]
+Description=Teams Agent FastAPI Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/app/agents/teams-agent
+ExecStart=/home/ubuntu/app/agents/teams-agent/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8100
+Restart=always
+RestartSec=5
+Environment=PATH=/home/ubuntu/app/agents/teams-agent/venv/bin
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

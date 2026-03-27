@@ -24,7 +24,7 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, HTTPException, Request, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from teams_agent import run_teams_action
@@ -33,8 +33,8 @@ from calendar_agent import run_calendar_action
 from graph_client import auth_store
 
 # Setup structured JSON logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("teams-agent")
+logger.setLevel(logging.INFO)
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -53,9 +53,10 @@ class JSONFormatter(logging.Formatter):
         }
         return json.dumps(log_entry)
 
-handler = logging.StreamHandler()
-handler.setFormatter(JSONFormatter())
-logger.addHandler(handler)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(JSONFormatter())
+    logger.addHandler(handler)
 logger.propagate = False
 
 app = FastAPI(
@@ -67,7 +68,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

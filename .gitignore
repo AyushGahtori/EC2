@@ -1,4 +1,41 @@
+# Runtime secrets and local env
 .env
-venv/
-__pycache__/
+.env.*
+!.env.example
+!**/.env.example
 .secrets/
+serviceAccountKey.json
+*.pem
+
+# Python artifacts
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# OS/editor artifacts
+.DS_Store
+Thumbs.db
+
+# Prevent accidental mixing of SaaS web-app files in this EC2 repo
+/.next/
+/node_modules/
+/coverage/
+/dist/
+/build/
+/src/
+/public/
+/functions/
+/memory-extraction/
+/package.json
+/package-lock.json
+/next.config.js
+/tailwind.config.js
+/postcss.config.js
+/tsconfig.json
+/tsconfig.tsbuildinfo
+/firebase.json
+/.firebaserc
+/components.json

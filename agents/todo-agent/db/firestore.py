@@ -3,29 +3,55 @@ db/firestore.py — Firebase Firestore persistence for To-Do Agent.
 Replaces MongoDB, enforces userId isolation.
 """
 import logging
+import os
 import uuid
-from typing import Any
 
 import firebase_admin
 from firebase_admin import credentials, firestore
 
 logger = logging.getLogger(__name__)
 
-import os
-
-# Try to find the service account key in the repo root (ai-everyone/serviceAccountKey.json)
+# Try to find the service account key in expected deployment locations.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-fallback_key_path = os.path.join(BASE_DIR, "serviceAccountKey.json")
+ec2_repo_key_path = os.path.join(BASE_DIR, "serviceAccountKey.json")
+ai_everyone_key_path = os.path.abspath(os.path.join(BASE_DIR, "..", "serviceAccountKey.json"))
+ec2_host_ai_everyone_key_path = "/home/ubuntu/app/ai-everyone/serviceAccountKey.json"
 secrets_key_path = "/app/.secrets/serviceAccountKey.json"
 
-key_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_KEY") or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or secrets_key_path or fallback_key_path
+
+def _resolve_service_account_key_path() -> str | None:
+    env_candidates = [
+        os.environ.get("FIREBASE_SERVICE_ACCOUNT_KEY"),
+        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+    ]
+
+    for candidate in env_candidates:
+        if not candidate:
+            continue
+        if os.path.exists(candidate):
+            return candidate
+        logger.warning("Configured Firebase key path does not exist: %s", candidate)
+
+    for candidate in (
+        secrets_key_path,
+        ec2_host_ai_everyone_key_path,
+        ai_everyone_key_path,
+        ec2_repo_key_path,
+    ):
+        if os.path.exists(candidate):
+            return candidate
+
+    return None
+
+
+key_path = _resolve_service_account_key_path()
 
 # Initialize Firebase Admin if not already initialized
 try:
     firebase_admin.get_app()
     logger.info("Firebase Admin already initialized.")
 except ValueError:
-    if os.path.exists(key_path):
+    if key_path:
         cred = credentials.Certificate(key_path)
         firebase_admin.initialize_app(cred)
         logger.info(f"Firebase Admin initialized with local key: {key_path}")

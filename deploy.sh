@@ -7,6 +7,7 @@ set -Eeuo pipefail
 APP_DIR="${APP_DIR:-/home/ubuntu/app}"
 SECRETS_DIR="${SECRETS_DIR:-/app/.secrets}"
 SERVICE_ACCOUNT_SOURCE="${SERVICE_ACCOUNT_SOURCE:-/home/ubuntu/app/ai-everyone/serviceAccountKey.json}"
+SERVICE_USER="${SERVICE_USER:-ubuntu}"
 
 TEAMS_DIR="${APP_DIR}/agents/teams-agent"
 TODO_DIR="${APP_DIR}/agents/todo-agent"
@@ -26,6 +27,15 @@ require_dir() {
     local dir_path="$1"
     if [[ ! -d "${dir_path}" ]]; then
         echo "Required directory missing: ${dir_path}"
+        exit 1
+    fi
+}
+
+
+require_user() {
+    local user_name="$1"
+    if ! id -u "${user_name}" >/dev/null 2>&1; then
+        echo "Required user does not exist: ${user_name}"
         exit 1
     fi
 }
@@ -91,12 +101,13 @@ setup_service_account_key() {
     local target_key="${SECRETS_DIR}/serviceAccountKey.json"
 
     if [[ -f "${SERVICE_ACCOUNT_SOURCE}" ]]; then
-        install -m 0600 "${SERVICE_ACCOUNT_SOURCE}" "${target_key}"
+        install -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0600 "${SERVICE_ACCOUNT_SOURCE}" "${target_key}"
         echo "Firebase service account key copied to ${target_key}"
         return
     fi
 
     if [[ -f "${target_key}" ]]; then
+        chown "${SERVICE_USER}:${SERVICE_USER}" "${target_key}"
         chmod 600 "${target_key}"
         echo "Firebase service account key already present at ${target_key}"
         return
@@ -121,11 +132,14 @@ print_post_deploy_notes() {
     echo "- systemctl status todo-agent --no-pager"
     echo "- curl http://127.0.0.1:8100/health"
     echo "- curl http://127.0.0.1:8200/health"
+    echo "- curl http://13.206.83.175/health"
+    echo "- curl http://13.206.83.175/todo/health"
 }
 
 
 main() {
     require_root
+    require_user "${SERVICE_USER}"
 
     require_dir "${APP_DIR}"
     require_dir "${TEAMS_DIR}"
@@ -133,6 +147,7 @@ main() {
     require_dir "${SYSTEMD_SRC_DIR}"
 
     mkdir -p "${SECRETS_DIR}"
+    chown "${SERVICE_USER}:${SERVICE_USER}" "${SECRETS_DIR}"
     chmod 700 "${SECRETS_DIR}"
 
     install_system_packages

@@ -16,6 +16,7 @@ Current runtime:
 
 - `teams-agent` FastAPI service on `127.0.0.1:8100`
 - `todo-agent` FastAPI service on `127.0.0.1:8200`
+- `google-agent` FastAPI service on `127.0.0.1:8300`
 - Nginx on `:80` (and `:443` after Certbot)
 - systemd for process supervision and restart
 
@@ -93,6 +94,7 @@ Repository paths expected by systemd/deploy script:
 
 - `/home/ubuntu/app/agents/teams-agent`
 - `/home/ubuntu/app/agents/todo-agent`
+- `/home/ubuntu/app/agents/google-agent`
 - `/home/ubuntu/app/systemd`
 - `/home/ubuntu/app/nginx/sites-available/agents`
 
@@ -123,6 +125,15 @@ Optional Twilio keys can be added to same file.
 ```bash
 FIREBASE_SERVICE_ACCOUNT_KEY=/app/.secrets/serviceAccountKey.json
 PORT=8200
+```
+
+`/home/ubuntu/app/agents/google-agent/.env`
+
+```bash
+GOOGLE_CLIENT_ID=<google-client-id>
+GOOGLE_CLIENT_SECRET=<google-client-secret>
+GOOGLE_REDIRECT_URI=http://localhost:3000/api/google-auth/callback
+PORT=8300
 ```
 
 ### Step 3: Provision Firebase Service Account Key
@@ -167,14 +178,18 @@ sudo certbot --nginx -d teams.<your-domain> -d todo.<your-domain>
 ```bash
 curl http://127.0.0.1:8100/health
 curl http://127.0.0.1:8200/health
+curl http://127.0.0.1:8300/health
 
 curl http://13.206.83.175/health
 curl http://13.206.83.175/todo/health
+curl http://13.206.83.175/google/health
 curl -X POST http://13.206.83.175/teams/action -H "Content-Type: application/json" -d '{"action":"make_call","contact":"test@example.com"}'
 curl -X POST http://13.206.83.175/todo/action -H "Content-Type: application/json" -d '{"taskId":"smoke-1","userId":"smoke-user","agentId":"todo-agent","action":"list_tasks"}'
+curl -X POST http://13.206.83.175/google/action -H "Content-Type: application/json" -d '{"taskId":"smoke-2","userId":"smoke-user","agentId":"google-agent","agent_type":"gmail","action":"read_emails","parameters":"last 5 emails"}'
 
 sudo systemctl status teams-agent --no-pager
 sudo systemctl status todo-agent --no-pager
+sudo systemctl status google-agent --no-pager
 ```
 
 ## 6) Firebase Cloud Functions Integration

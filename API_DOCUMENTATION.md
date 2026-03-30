@@ -9,11 +9,13 @@ Current deployed host (no domain yet):
 - Shared base URL: `http://13.206.83.175`
 - Teams health: `GET http://13.206.83.175/health`
 - Todo health: `GET http://13.206.83.175/todo/health`
+- Google health: `GET http://13.206.83.175/google/health`
 
 Internal ports behind Nginx:
 
 - Teams service: `127.0.0.1:8100`
 - Todo service: `127.0.0.1:8200`
+- Google service: `127.0.0.1:8300`
 
 ## 2) Request/Response Conventions
 
@@ -357,7 +359,41 @@ List tasks:
 }
 ```
 
-## 9) Integration Guidance
+## 9) Google Workspace API
+
+Endpoint: `POST /google/action`
+
+Supported `agent_type` values:
+
+- `gmail`
+- `drive`
+- `calendar`
+- `meet`
+- `tasks`
+- `web_search`
+
+### Request Schema
+
+```json
+{
+  "taskId": "trace-id",
+  "userId": "user-id",
+  "agentId": "google-agent",
+  "agent_type": "gmail | drive | calendar | meet | tasks | web_search",
+  "action": "intent action string",
+  "parameters": "plain-text parameters"
+}
+```
+
+### Health & Auth Endpoints (via Nginx prefix)
+
+- `GET /google/health`
+- `GET /google/auth/login`
+- `GET /google/auth/callback`
+- `GET /google/auth/status`
+- `POST /google/auth/logout`
+
+## 10) Integration Guidance
 
 - Keep browser calls pointed at backend only (Cloud Functions or Next.js API routes).
 - Include `taskId`, `userId`, and `agentId` for traceability.
@@ -368,8 +404,9 @@ Recommended backend env values (current IP mode):
 
 - `TEAMS_AGENT_BASE_URL=http://13.206.83.175`
 - `TODO_AGENT_BASE_URL=http://13.206.83.175`
+- `GOOGLE_AGENT_BASE_URL=http://13.206.83.175`
 
-## 10) Change Management
+## 11) Change Management
 
 Any endpoint contract change must include:
 

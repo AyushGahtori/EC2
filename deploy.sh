@@ -11,6 +11,7 @@ SERVICE_USER="${SERVICE_USER:-ubuntu}"
 
 TEAMS_DIR="${APP_DIR}/agents/teams-agent"
 TODO_DIR="${APP_DIR}/agents/todo-agent"
+GOOGLE_DIR="${APP_DIR}/agents/google-agent"
 SYSTEMD_SRC_DIR="${APP_DIR}/systemd"
 NGINX_SRC_CONF="${APP_DIR}/nginx/sites-available/agents"
 
@@ -73,6 +74,7 @@ setup_python_env() {
 install_systemd_units() {
     install -m 0644 "${SYSTEMD_SRC_DIR}/teams-agent.service" /etc/systemd/system/teams-agent.service
     install -m 0644 "${SYSTEMD_SRC_DIR}/todo-agent.service" /etc/systemd/system/todo-agent.service
+    install -m 0644 "${SYSTEMD_SRC_DIR}/google-agent.service" /etc/systemd/system/google-agent.service
     systemctl daemon-reload
 }
 
@@ -92,8 +94,8 @@ install_nginx_config() {
 
 
 start_services() {
-    systemctl enable --now teams-agent todo-agent
-    systemctl restart teams-agent todo-agent
+    systemctl enable --now teams-agent todo-agent google-agent
+    systemctl restart teams-agent todo-agent google-agent
 }
 
 
@@ -130,10 +132,13 @@ print_post_deploy_notes() {
     echo "Useful checks:"
     echo "- systemctl status teams-agent --no-pager"
     echo "- systemctl status todo-agent --no-pager"
+    echo "- systemctl status google-agent --no-pager"
     echo "- curl http://127.0.0.1:8100/health"
     echo "- curl http://127.0.0.1:8200/health"
+    echo "- curl http://127.0.0.1:8300/health"
     echo "- curl http://13.206.83.175/health"
     echo "- curl http://13.206.83.175/todo/health"
+    echo "- curl http://13.206.83.175/google/health"
 }
 
 
@@ -144,6 +149,7 @@ main() {
     require_dir "${APP_DIR}"
     require_dir "${TEAMS_DIR}"
     require_dir "${TODO_DIR}"
+    require_dir "${GOOGLE_DIR}"
     require_dir "${SYSTEMD_SRC_DIR}"
 
     mkdir -p "${SECRETS_DIR}"
@@ -153,6 +159,7 @@ main() {
     install_system_packages
     setup_python_env "${TEAMS_DIR}"
     setup_python_env "${TODO_DIR}"
+    setup_python_env "${GOOGLE_DIR}"
     setup_service_account_key
 
     install_systemd_units

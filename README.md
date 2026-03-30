@@ -16,13 +16,17 @@ This repository contains the EC2 runtime for SnitchX agent services.
   - Endpoints: `/teams/action`, `/email/action`, `/calendar/action`, auth endpoints
 - `todo-agent` on port `8200`
   - Endpoint: `/todo/action`
+- `google-agent` on port `8300`
+  - Endpoints: `/google/action`, auth endpoints
 
 Current public host mode (without domain):
 
 - `http://13.206.83.175/health` (teams health)
 - `http://13.206.83.175/todo/health` (todo health)
+- `http://13.206.83.175/google/health` (google health)
 - `http://13.206.83.175/teams/action`
 - `http://13.206.83.175/todo/action`
+- `http://13.206.83.175/google/action`
 
 ## Documentation
 

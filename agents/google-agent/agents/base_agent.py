@@ -33,6 +33,40 @@ class BaseAgent(ABC):
         self.user_id = user_id
         self.agent_name = self.__class__.__name__
 
+    def _resolve_ollama_model(self, context: Optional[Dict[str, Any]] = None) -> str:
+        """Resolve model with cloud/local hybrid routing and safe fallbacks."""
+        context = context or {}
+
+        direct_model = context.get("ollama_model") or context.get("model")
+        if isinstance(direct_model, str) and direct_model.strip():
+            return direct_model.strip()
+
+        mode = context.get("ollama_mode") or context.get("model_mode") or context.get("model_source")
+        if not mode and isinstance(context.get("use_cloud"), bool):
+            mode = "cloud" if context.get("use_cloud") else "local"
+
+        cloud_model = os.getenv("OLLAMA_MODEL_CLOUD", "").strip()
+        local_model = os.getenv("OLLAMA_MODEL_LOCAL", "").strip()
+        default_model = os.getenv("OLLAMA_DEFAULT_MODEL", "").strip()
+        legacy_model = os.getenv("OLLAMA_MODEL", "").strip()
+
+        if isinstance(mode, str):
+            selected_mode = mode.strip().lower()
+            if selected_mode == "cloud" and cloud_model:
+                return cloud_model
+            if selected_mode == "local" and local_model:
+                return local_model
+
+        if default_model:
+            return default_model
+        if legacy_model:
+            return legacy_model
+        if cloud_model:
+            return cloud_model
+        if local_model:
+            return local_model
+        return "qwen2.5:7b"
+
     @abstractmethod
     async def handle(self, user_message: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -96,7 +130,7 @@ If the current message is continuing a pending request, merge it with the pendin
 
         # Call local Ollama directly for json extraction
         ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+        ollama_model = self._resolve_ollama_model(context)
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -117,10 +151,10 @@ If the current message is continuing a pending request, merge it with the pendin
         
         return {}
 
-    async def llm_complete(self, messages: list, system_prompt: str = "") -> str:
+    async def llm_complete(self, messages: list, system_prompt: str = "", context: Optional[Dict[str, Any]] = None) -> str:
         """Call local Ollama to generate a plain text response."""
         ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+        ollama_model = self._resolve_ollama_model(context)
 
         formatted_messages = []
         if system_prompt:

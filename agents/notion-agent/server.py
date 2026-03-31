@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -6,10 +7,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from notion_agent import NotionAgent, NotionAgentError
-
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 load_dotenv(BASE_DIR / ".env")
+
+from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
+from ec2_shared.oauth_router import OAuthAgentRegistration, register_oauth_routes
+from notion_agent import NotionAgent, NotionAgentError
 
 app = FastAPI(
     title="SnitchX Notion Agent",
@@ -50,6 +57,10 @@ class NotionActionResponse(BaseModel):
     pages: list[dict] | None = None
     error: str | None = None
     displayName: str | None = None
+    auth_url: str | None = None
+    provider: str | None = None
+    agentId: str | None = None
+    bundleId: str | None = None
 
 
 def _resolve_page_id(agent: NotionAgent, page_id: str | None, query: str | None) -> str:
@@ -66,6 +77,17 @@ def _resolve_page_id(agent: NotionAgent, page_id: str | None, query: str | None)
     return results[0]["id"]
 
 
+register_oauth_routes(
+    app,
+    OAuthAgentRegistration(
+        provider="notion",
+        agent_slug="notion",
+        display_name="Notion",
+        default_scopes=[],
+    ),
+)
+
+
 @app.get("/health")
 def health():
     return {"status": "healthy", "agent": "notion-agent"}
@@ -73,8 +95,25 @@ def health():
 
 @app.post("/notion/action", response_model=NotionActionResponse)
 def notion_action(req: NotionActionRequest) -> NotionActionResponse:
+    credentials = resolve_provider_credentials(
+        user_id=req.userId,
+        provider="notion",
+        access_token=req.access_token,
+        refresh_token=req.refresh_token,
+    )
+    access_token = credentials.get("access_token")
+    if not access_token:
+        return NotionActionResponse(
+            **auth_required_response(
+                agent_slug="notion",
+                agent_id="notion-agent",
+                provider="notion",
+                message="Notion access token is missing. Please connect your Notion workspace.",
+            )
+        )
+
     try:
-        agent = NotionAgent(req.access_token or "")
+        agent = NotionAgent(access_token)
         action = req.action.strip().lower()
 
         if action == "search_pages":

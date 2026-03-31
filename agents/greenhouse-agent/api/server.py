@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 
 import requests
 from dotenv import load_dotenv
@@ -40,6 +41,7 @@ class AgentTaskRequest(BaseModel):
     # list_candidates
     job_id: str | None = None
     candidate_status: str | None = None   # 'active', 'rejected', 'hired'
+    status: str | None = None
     # get_candidate_resume
     candidate_id: str | None = None
     # schedule_interview
@@ -83,7 +85,7 @@ def execute_greenhouse_action(req: AgentTaskRequest) -> AgentTaskResponse:
     Calls the Greenhouse Harvest REST API v1.
     """
     action = req.action
-    api_key = req.access_token
+    api_key = req.access_token or os.getenv("GREENHOUSE_API_KEY")
 
     if not api_key:
         return AgentTaskResponse(
@@ -100,8 +102,9 @@ def execute_greenhouse_action(req: AgentTaskRequest) -> AgentTaskResponse:
             params: dict[str, str] = {}
             if req.job_id:
                 params["job_id"] = req.job_id
-            if req.candidate_status:
-                params["status"] = req.candidate_status
+            status_filter = req.status or req.candidate_status
+            if status_filter:
+                params["status"] = status_filter
 
             res = session.get(f"{GREENHOUSE_API}/candidates", params=params, timeout=15)
             res.raise_for_status()

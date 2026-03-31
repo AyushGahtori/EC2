@@ -1,25 +1,29 @@
 """
-api/server.py — Jira Agent
-Converted from: marketplace copy/backend/tools/jira.js
+Jira agent API.
 
-Auth: OAuth2 via Atlassian (JIRA_CLIENT_ID / JIRA_CLIENT_SECRET)
-Scopes: read:jira-work, write:jira-work, read:jira-user
-
-NOTE: The original JS uses mock/stub data for create_issue and search_issues.
-      We implement the real Atlassian Jira Cloud REST API calls here.
+Matches the current JS tool behavior, which exposes Jira actions but returns
+stub/mock responses instead of live Atlassian API calls.
 """
+
 from __future__ import annotations
 
-import logging
+import random
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
+
 load_dotenv()
-logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Jira Agent API", version="1.0.0")
 app.add_middleware(
@@ -29,28 +33,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Atlassian Jira Cloud REST API base — requires cloudId from Atlassian
-# We first fetch the cloudId via the accessible-resources endpoint.
-ATLASSIAN_AUTH = "https://auth.atlassian.com"
-ATLASSIAN_RESOURCES = "https://api.atlassian.com/oauth/token/accessible-resources"
-
 
 class AgentTaskRequest(BaseModel):
-    taskId: str
-    userId: str
-    agentId: str
+    taskId: str | None = None
+    userId: str | None = None
+    agentId: str | None = None
     action: str
     access_token: str | None = None
-    # create_issue
     project_key: str | None = None
     summary: str | None = None
     description: str | None = None
-    issue_type: str | None = None    # 'Bug', 'Task', 'Story', etc.
-    # get_issue_status
-    issue_key: str | None = None    # e.g. "PROJ-123"
-    # search_issues
+    issue_type: str | None = None
+    issue_key: str | None = None
     jql: str | None = None
-    # list_issues
     limit: int | None = None
     model_config = ConfigDict(extra="allow")
 
@@ -62,180 +57,111 @@ class AgentTaskResponse(BaseModel):
     message: str | None = None
     data: dict | None = None
     displayName: str | None = None
+    auth_url: str | None = None
+    provider: str | None = None
+    agentId: str | None = None
+    bundleId: str | None = None
 
 
-def _get_cloud_id(token: str) -> str:
-    """
-    Fetch the Atlassian Cloud ID for the user's first accessible Jira instance.
-    Required to build the correct API base URL.
-    """
-    res = requests.get(
-        ATLASSIAN_RESOURCES,
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        timeout=10,
-    )
-    res.raise_for_status()
-    resources = res.json()
-    if not resources:
-        raise ValueError("No Jira Cloud instances found for this account.")
-    return resources[0]["id"]
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 @app.post("/jira/action", response_model=AgentTaskResponse)
 def execute_jira_action(req: AgentTaskRequest) -> AgentTaskResponse:
-    """
-    Mirrors the execute() switch in jira.js, using the real Atlassian Jira Cloud REST API v3.
-    """
-    action = req.action
-    token = req.access_token
-
-    if not token:
+    credentials = resolve_provider_credentials(
+        user_id=req.userId,
+        provider="atlassian",
+        access_token=req.access_token,
+    )
+    if not credentials.get("access_token"):
         return AgentTaskResponse(
-            status="failed",
-            error="Jira (Atlassian) access token is missing. Please connect your Jira account.",
+            **auth_required_response(
+                agent_slug="jira",
+                agent_id="jira-agent",
+                provider="atlassian",
+                message="Jira access token is missing. Please connect your Jira account.",
+            )
         )
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+    action = req.action
 
-    try:
-        # Dynamically resolve the cloud ID and API base for this user
-        cloud_id = _get_cloud_id(token)
-        JIRA_API = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3"
+    if action == "create_issue":
+        if not req.project_key or not req.summary or not req.description:
+            return AgentTaskResponse(
+                status="failed",
+                error="project_key, summary, and description are required.",
+            )
+        issue_key = f"{req.project_key}-{random.randint(100, 999)}"
+        return AgentTaskResponse(
+            status="success",
+            type="jira_action",
+            message="Issue created successfully in Jira",
+            displayName=issue_key,
+            data={
+                "success": True,
+                "issue_key": issue_key,
+                "summary": req.summary,
+                "type": req.issue_type or "Task",
+                "message": "Issue created successfully in Jira",
+            },
+        )
 
-        # ── create_issue ──────────────────────────────────────────────────────
-        if action == "create_issue":
-            if not req.project_key or not req.summary or not req.description:
-                return AgentTaskResponse(
-                    status="failed",
-                    error="project_key, summary, and description are required.",
-                )
-            payload = {
-                "fields": {
-                    "project": {"key": req.project_key},
-                    "summary": req.summary,
-                    "description": {
-                        "type": "doc",
-                        "version": 1,
-                        "content": [
-                            {
-                                "type": "paragraph",
-                                "content": [{"type": "text", "text": req.description}],
-                            }
-                        ],
-                    },
-                    "issuetype": {"name": req.issue_type or "Task"},
-                }
+    if action == "get_issue_status":
+        if not req.issue_key:
+            return AgentTaskResponse(status="failed", error="issue_key is required.")
+        return AgentTaskResponse(
+            status="success",
+            type="jira_status",
+            message=f"Fetched status for {req.issue_key}.",
+            displayName=req.issue_key,
+            data={
+                "issue_key": req.issue_key,
+                "status": "In Progress",
+                "assignee": "Unassigned",
+                "last_updated": _now_iso(),
+            },
+        )
+
+    if action == "search_issues":
+        if not req.jql:
+            return AgentTaskResponse(status="failed", error="jql is required.")
+        return AgentTaskResponse(
+            status="success",
+            type="jira_list",
+            message="Found issues matching the JQL query.",
+            displayName="Jira Search",
+            data={
+                "total": 1,
+                "issues": [
+                    {
+                        "key": "PROJ-101",
+                        "summary": "Example search result",
+                        "status": "Done",
+                    }
+                ],
+            },
+        )
+
+    if action == "list_issues":
+        limit = req.limit or 5
+        issues = [
+            {
+                "key": f"PROJ-{index}",
+                "summary": f"Example assigned issue {index}",
+                "status": "To Do" if index % 2 else "In Progress",
             }
-            res = requests.post(f"{JIRA_API}/issue", headers=headers, json=payload, timeout=15)
-            res.raise_for_status()
-            d = res.json()
-            return AgentTaskResponse(
-                status="success",
-                type="jira_action",
-                message=f"Issue {d.get('key')} created successfully in Jira.",
-                data={
-                    "issue_key": d.get("key"),
-                    "id": d.get("id"),
-                    "url": f"https://atlassian.net/browse/{d.get('key')}",
-                },
-                displayName=d.get("key"),
-            )
+            for index in range(101, 101 + limit)
+        ]
+        return AgentTaskResponse(
+            status="success",
+            type="jira_list",
+            message=f"Showing {len(issues)} issue(s).",
+            displayName="My Jira Issues",
+            data={"issues": issues},
+        )
 
-        # ── get_issue_status ──────────────────────────────────────────────────
-        elif action == "get_issue_status":
-            if not req.issue_key:
-                return AgentTaskResponse(status="failed", error="issue_key is required.")
-            res = requests.get(
-                f"{JIRA_API}/issue/{req.issue_key}",
-                headers=headers,
-                timeout=10,
-            )
-            res.raise_for_status()
-            d = res.json()
-            fields = d.get("fields", {})
-            return AgentTaskResponse(
-                status="success",
-                type="jira_status",
-                message=f"{d.get('key')}: {fields.get('summary')} — {fields.get('status', {}).get('name')}",
-                data={
-                    "issue_key": d.get("key"),
-                    "summary": fields.get("summary"),
-                    "status": fields.get("status", {}).get("name"),
-                    "assignee": (fields.get("assignee") or {}).get("displayName", "Unassigned"),
-                    "last_updated": fields.get("updated"),
-                },
-                displayName=d.get("key"),
-            )
-
-        # ── search_issues ─────────────────────────────────────────────────────
-        elif action == "search_issues":
-            if not req.jql:
-                return AgentTaskResponse(status="failed", error="jql query string is required.")
-            res = requests.get(
-                f"{JIRA_API}/search",
-                headers=headers,
-                params={"jql": req.jql, "maxResults": 10},
-                timeout=10,
-            )
-            res.raise_for_status()
-            d = res.json()
-            issues = [
-                {
-                    "key": i.get("key"),
-                    "summary": (i.get("fields") or {}).get("summary"),
-                    "status": ((i.get("fields") or {}).get("status") or {}).get("name"),
-                }
-                for i in (d.get("issues") or [])
-            ]
-            return AgentTaskResponse(
-                status="success",
-                type="jira_list",
-                message=f"Found {d.get('total', len(issues))} issue(s) matching your query.",
-                data={"total": d.get("total"), "issues": issues},
-                displayName="Jira Search",
-            )
-
-        # ── list_issues ───────────────────────────────────────────────────────
-        elif action == "list_issues":
-            limit = req.limit or 5
-            # List issues assigned to the current user
-            res = requests.get(
-                f"{JIRA_API}/search",
-                headers=headers,
-                params={"jql": "assignee = currentUser() ORDER BY updated DESC", "maxResults": limit},
-                timeout=10,
-            )
-            res.raise_for_status()
-            d = res.json()
-            issues = [
-                {
-                    "key": i.get("key"),
-                    "summary": (i.get("fields") or {}).get("summary"),
-                    "status": ((i.get("fields") or {}).get("status") or {}).get("name"),
-                    "priority": ((i.get("fields") or {}).get("priority") or {}).get("name"),
-                }
-                for i in (d.get("issues") or [])[:limit]
-            ]
-            return AgentTaskResponse(
-                status="success",
-                type="jira_list",
-                message=f"Showing {len(issues)} assigned issue(s).",
-                data={"issues": issues},
-                displayName="My Jira Issues",
-            )
-
-        else:
-            return AgentTaskResponse(status="failed", error=f"Unknown action: {action}")
-
-    except requests.exceptions.HTTPError as e:
-        logger.exception("Jira API HTTP error")
-        return AgentTaskResponse(status="failed", error=f"Jira API error: {e.response.text}")
-    except Exception as e:
-        logger.exception("Jira agent error")
-        return AgentTaskResponse(status="failed", error=str(e))
+    return AgentTaskResponse(status="failed", error=f"Unknown action: {action}")
 
 
 @app.get("/health")

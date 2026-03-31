@@ -61,8 +61,8 @@ from graph_client import GraphClient, DeviceFlowRequired, auth_store
 class GraphDirectoryClient(GraphClient):
     """Searches Microsoft Teams contacts via the Graph API."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, access_token: str | None = None, refresh_token: str | None = None) -> None:
+        super().__init__(access_token=access_token, refresh_token=refresh_token)
 
 
     def search_people(self, query: str) -> list[dict]:

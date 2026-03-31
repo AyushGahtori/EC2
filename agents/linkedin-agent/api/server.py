@@ -1,34 +1,33 @@
 """
-api/server.py — LinkedIn Agent
-Converted from: marketplace copy/backend/tools/linkedin.js
+LinkedIn agent API.
 
-Auth: OAuth2 (LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET)
-Scopes: w_member_social, openid, profile, email
+Mirrors the JS tool behavior while using the detached EC2 Firestore bootstrap.
 """
+
 from __future__ import annotations
 
 import logging
-import os
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import requests
-import firebase_admin
-from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
+from ec2_shared.firestore_store import get_db
+from firebase_admin import firestore
+
 load_dotenv()
 logger = logging.getLogger(__name__)
-
-# ── Firebase init (for scheduled post queue — mirrors LinkedIn JS) ─────────────
-_KEY_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY", "/home/ubuntu/app/.secrets/serviceAccountKey.json")
-if not firebase_admin._apps:
-    cred = credentials.Certificate(_KEY_PATH)
-    firebase_admin.initialize_app(cred)
-
-db = firestore.client()
+db = get_db()
 
 app = FastAPI(title="LinkedIn Agent API", version="1.0.0")
 app.add_middleware(
@@ -42,16 +41,14 @@ LINKEDIN_API = "https://api.linkedin.com/v2"
 
 
 class AgentTaskRequest(BaseModel):
-    taskId: str
-    userId: str
-    agentId: str
+    taskId: str | None = None
+    userId: str | None = None
+    agentId: str | None = None
     action: str
     access_token: str | None = None
-    # LinkedIn URN — the user's LinkedIn person ID (urn:li:person:XXXXX)
     urn: str | None = None
-    # schedule_post
     content: str | None = None
-    scheduled_time: str | None = None  # ISO datetime string
+    scheduled_time: str | None = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -62,49 +59,53 @@ class AgentTaskResponse(BaseModel):
     message: str | None = None
     data: dict | None = None
     displayName: str | None = None
+    auth_url: str | None = None
+    provider: str | None = None
+    agentId: str | None = None
+    bundleId: str | None = None
 
 
 @app.post("/linkedin/action", response_model=AgentTaskResponse)
 def execute_linkedin_action(req: AgentTaskRequest) -> AgentTaskResponse:
-    """
-    Mirrors the execute() switch in linkedin.js.
-    Includes background scheduling via Firestore (same as JS version with firebase-admin).
-    """
-    action = req.action
-    token = req.access_token
-    user_id = req.userId
+    credentials = resolve_provider_credentials(
+        user_id=req.userId,
+        provider="linkedin",
+        access_token=req.access_token,
+    )
+    token = credentials.get("access_token")
+    urn = req.urn or credentials.get("urn")
 
     if not token:
         return AgentTaskResponse(
-            status="failed",
-            error="LinkedIn access token is missing. Please connect your LinkedIn account.",
+            **auth_required_response(
+                agent_slug="linkedin",
+                agent_id="linkedin-agent",
+                provider="linkedin",
+                message="LinkedIn access token is missing. Please connect your LinkedIn account.",
+            )
         )
 
+    action = req.action
+
     try:
-        # ── schedule_post ─────────────────────────────────────────────────────
         if action == "schedule_post":
             if not req.content:
                 return AgentTaskResponse(status="failed", error="content is required.")
-
-            if not req.urn:
+            if not urn:
                 return AgentTaskResponse(
                     status="failed",
                     error="Missing LinkedIn URN. Please re-connect the integration.",
                 )
 
-            # Handle background scheduling — mirrors JS scheduled_time logic exactly
-            if req.scheduled_time and user_id:
+            if req.scheduled_time and req.userId:
                 try:
-                    scheduled_dt = datetime.fromisoformat(
-                        req.scheduled_time.replace("Z", "+00:00")
-                    )
-                    now = datetime.utcnow()
-                    # Only schedule if it's more than 60 seconds in the future
-                    if (scheduled_dt.replace(tzinfo=None) - now).total_seconds() > 60:
-                        # Scoped under users/{userId}/scheduled_tasks — prevents cross-user access
-                        db.collection("users").document(user_id).collection("scheduled_tasks").add(
+                    scheduled_dt = datetime.fromisoformat(req.scheduled_time.replace("Z", "+00:00"))
+                    if scheduled_dt > datetime.now(scheduled_dt.tzinfo) and (
+                        scheduled_dt - datetime.now(scheduled_dt.tzinfo)
+                    ).total_seconds() > 60:
+                        db.collection("scheduled_tasks").add(
                             {
-                                "uid": user_id,
+                                "uid": req.userId,
                                 "qualifiedName": "linkedin__schedule_post",
                                 "args": {"content": req.content},
                                 "scheduledFor": scheduled_dt.isoformat(),
@@ -115,90 +116,89 @@ def execute_linkedin_action(req: AgentTaskRequest) -> AgentTaskResponse:
                         return AgentTaskResponse(
                             status="success",
                             type="linkedin_action",
-                            message=f"Post successfully queued to be published at {scheduled_dt.strftime('%b %d, %Y %H:%M')}.",
+                            message=(
+                                "Post successfully queued to be published safely at "
+                                f"{scheduled_dt.isoformat()}"
+                            ),
                             displayName="LinkedIn Post Scheduled",
                         )
                 except (ValueError, TypeError):
-                    pass  # Invalid date — fall through to immediate post
+                    pass
 
-            # ── Immediate post to LinkedIn ─────────────────────────────────
-            # POST /ugcPosts — mirrors JS payload exactly
-            post_headers = {
-                "Authorization": f"Bearer {token}",
-                "X-Restli-Protocol-Version": "2.0.0",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "author": req.urn,
-                "lifecycleState": "PUBLISHED",
-                "specificContent": {
-                    "com.linkedin.ugc.ShareContent": {
-                        "shareCommentary": {"text": req.content},
-                        "shareMediaCategory": "NONE",
-                    }
-                },
-                "visibility": {
-                    "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
-                },
-            }
-            res = requests.post(
+            response = requests.post(
                 f"{LINKEDIN_API}/ugcPosts",
-                headers=post_headers,
-                json=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Restli-Protocol-Version": "2.0.0",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "author": urn,
+                    "lifecycleState": "PUBLISHED",
+                    "specificContent": {
+                        "com.linkedin.ugc.ShareContent": {
+                            "shareCommentary": {"text": req.content},
+                            "shareMediaCategory": "NONE",
+                        }
+                    },
+                    "visibility": {
+                        "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+                    },
+                },
                 timeout=15,
             )
 
-            # Handle duplicate post error exactly as the JS does
-            if res.status_code == 422:
-                error_data = res.json()
-                error_msg = error_data.get("message", "")
-                if "duplicate" in error_msg.lower():
+            if response.status_code == 422:
+                api_error = response.json()
+                if "duplicate" in str(api_error.get("message", "")).lower():
                     return AgentTaskResponse(
                         status="failed",
-                        error=f"LinkedIn blocked this post because it is a duplicate of a recent post: {error_msg}",
+                        error=(
+                            "LinkedIn blocked this post because it is a duplicate of a recent post: "
+                            f"{api_error.get('message', '')}"
+                        ),
                     )
 
-            res.raise_for_status()
-            data = res.json()
+            response.raise_for_status()
+            payload = response.json()
             return AgentTaskResponse(
                 status="success",
                 type="linkedin_action",
                 message="Successfully posted on LinkedIn!",
-                data={"postId": data.get("id")},
                 displayName="LinkedIn Post",
+                data={"success": True, "postId": payload.get("id"), "message": "Successfully posted on LinkedIn!"},
             )
 
-        # ── analyze_engagement ────────────────────────────────────────────────
-        elif action == "analyze_engagement":
-            # Mirrors JS response — LinkedIn restricts analytics to approved Community Management API
+        if action == "analyze_engagement":
             return AgentTaskResponse(
                 status="success",
                 type="linkedin_info",
                 message=(
-                    "Detailed engagement analytics requires 'Community Management API' approval from LinkedIn. "
+                    "Detailed engagement analytics demand 'Community Management API' approval from LinkedIn. "
                     "I can currently help you post and schedule content natively."
                 ),
                 displayName="Engagement Analytics",
             )
 
-        else:
-            return AgentTaskResponse(status="failed", error=f"Unknown action: {action}")
-
-    except requests.exceptions.HTTPError as e:
-        error_data = {}
+        return AgentTaskResponse(status="failed", error=f"Unknown action: {action}")
+    except requests.HTTPError as exc:
+        api_error: dict[str, object] = {}
         try:
-            error_data = e.response.json()
+            api_error = exc.response.json()
         except Exception:
             pass
-        error_msg = error_data.get("message") or e.response.text
         logger.exception("LinkedIn API HTTP error")
         return AgentTaskResponse(
             status="failed",
-            error=f"Failed to post on LinkedIn. Error: {error_msg}. Check permissions if this is the first attempt.",
+            error=(
+                "Failed to post on LinkedIn. Error: "
+                f"{api_error.get('message') or exc.response.text}. "
+                "Check permissions if this is the first attempt."
+            ),
         )
-    except Exception as e:
+    except Exception as exc:
         logger.exception("LinkedIn agent error")
-        return AgentTaskResponse(status="failed", error=str(e))
+        return AgentTaskResponse(status="failed", error=str(exc))
 
 
 @app.get("/health")

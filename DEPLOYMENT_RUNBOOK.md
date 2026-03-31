@@ -1,142 +1,85 @@
 # EC2 Deployment Runbook
 
-This runbook is the source-of-truth for deploying and operating agent services on AWS EC2.
+This runbook is the source of truth for deploying the detached EC2 agent repo.
 
-## 1) Architecture
+## Architecture
 
-Request flow:
+- Only `EC2/` is deployed to the EC2 instance.
+- The main AI Everyone web application is not present on the EC2 host.
+- Each folder under `EC2/agents` is a self-contained microservice with its own `main.py`, `server.py`, env handling, and action logic.
+- Nginx exposes public routes and forwards traffic to local FastAPI services.
+- OAuth is owned by the EC2 agents themselves, not by the main web app runtime.
 
-1. Browser / app client sends request to backend layer (Firebase Cloud Functions or Next.js API route).
-2. Backend validates user/session and maps action to an agent endpoint.
-3. Backend calls EC2 agent URL through HTTPS (Nginx).
-4. Nginx routes request to local FastAPI service (`teams-agent` or `todo-agent`).
-5. Agent response is returned to backend, then to browser.
+## Repository Layout On Host
 
-Current runtime:
+Expected deploy location:
 
-- `teams-agent` FastAPI service on `127.0.0.1:8100`
-- `todo-agent` FastAPI service on `127.0.0.1:8200`
-- `google-agent` FastAPI service on `127.0.0.1:8300`
-- Nginx on `:80` (and `:443` after Certbot)
-- systemd for process supervision and restart
+- `/home/ubuntu/app`
 
-## 2) Completed In This Iteration
+Expected subpaths:
 
-The following updates were applied in this repository:
-
-### Repo Separation / Git Hygiene
-
-- Added ignore rule in SaaS root repo: `E:\SaaS-ai\.gitignore` now ignores `ai-everyone/EC2/`.
-- Added ignore rule in SaaS app repo: `E:\SaaS-ai\ai-everyone\.gitignore` now ignores `/EC2/`.
-- Expanded `E:\SaaS-ai\ai-everyone\EC2\.gitignore` to prevent accidental web-app file mixing (`/src/`, `/public/`, `/functions/`, `package.json`, etc.) and added stronger local-secret/runtime ignores.
-
-### Teams Agent Fixes
-
-- Fixed duplicate import in `agents/teams-agent/server.py` (`Request` imported once).
-- Fixed invalid CORS combination by setting `allow_credentials=False` with wildcard origins.
-- Hardened logger setup to avoid duplicate handlers on reload/restart.
-
-### Todo Agent Fixes
-
-- Refactored `agents/todo-agent/api/server.py` to remove duplicated/unreachable code branches.
-- Standardized success/failure structured logging across all action branches.
-- Added `.env` loading support via `python-dotenv` for systemd + local runs.
-
-### Firestore Credential Resolution
-
-- Fixed credential path fallback in `agents/todo-agent/db/firestore.py`.
-- New behavior:
-  1. Check `FIREBASE_SERVICE_ACCOUNT_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` if file exists.
-  2. Fallback to `/home/ubuntu/app/.secrets/serviceAccountKey.json`.
-  3. Fallback to repo key if present.
-  4. Otherwise initialize with default credentials.
-
-### Deployment Hardening
-
-- Rewrote `deploy.sh` with:
-  - strict bash mode (`set -Eeuo pipefail`)
-  - root check
-  - required directory checks
-  - idempotent venv + package installation
-  - systemd daemon reload
-  - nginx config installation + syntax test
-  - explicit startup checks flow
-- Updated systemd units (`systemd/*.service`):
-  - `network-online.target`
-  - optional `EnvironmentFile` support
-  - unbuffered Python output for logs
-- Updated nginx proxy config with keepalive and proxy timeout settings.
-
-### Environment Documentation Cleanup
-
-- Replaced `agents/teams-agent/.env.example` to remove obsolete Ollama variables.
-- Kept only active Graph/Twilio/server settings.
-
-## 3) Remaining Work (Not Yet Implemented)
-
-1. API authentication between backend and EC2 agents (shared secret or JWT).
-2. Rate limiting at Nginx layer (per IP / per user).
-3. Token persistence for Microsoft Graph device flow (`auth_store` currently in memory).
-4. Centralized observability (CloudWatch metrics/alarms + dashboard).
-5. Blue/green or rolling deployment strategy for zero-downtime upgrades.
-6. Automated health checks and rollback script.
-
-## 4) EC2 Host Prerequisites
-
-- Ubuntu EC2 instance with inbound rules:
-  - `22` (SSH)
-  - `80` (HTTP)
-  - `443` (HTTPS)
-- Domain is optional for now. Current host IP is `13.206.83.175` over HTTP.
-- Code deployed at `/home/ubuntu/app`.
-
-Repository paths expected by systemd/deploy script:
-
-- `/home/ubuntu/app/agents/teams-agent`
-- `/home/ubuntu/app/agents/todo-agent`
-- `/home/ubuntu/app/agents/google-agent`
+- `/home/ubuntu/app/agents/<agent-name>`
 - `/home/ubuntu/app/systemd`
 - `/home/ubuntu/app/nginx/sites-available/agents`
+- `/home/ubuntu/app/.secrets/serviceAccountKey.json`
 
-## 5) Deployment Steps
+## Required Secrets And Env
 
-### Step 1: Sync Code to EC2
+Shared across OAuth agents:
+
+- `AGENT_OAUTH_SHARED_SECRET=<shared signing secret used by web app + EC2>`
+- `AGENT_PUBLIC_BASE_URL=http://13.206.83.175`
+- `FIREBASE_SERVICE_ACCOUNT_KEY=/home/ubuntu/app/.secrets/serviceAccountKey.json`
+
+Google:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- OAuth redirect URI in Google console:
+  `http://13.206.83.175/google/auth/callback`
+
+Microsoft / Teams:
+
+- `GRAPH_TENANT_ID`
+- `GRAPH_CLIENT_ID` or `MICROSOFT_CLIENT_ID`
+- `MICROSOFT_CLIENT_SECRET`
+- OAuth redirect URI in Azure app:
+  `http://13.206.83.175/teams/auth/callback`
+
+Other OAuth agents:
+
+- `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET`
+- `CANVA_CLIENT_ID` / `CANVA_CLIENT_SECRET`
+- `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET`
+- `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET`
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
+- `GITLAB_CLIENT_ID` / `GITLAB_CLIENT_SECRET`
+- `JIRA_CLIENT_ID` / `JIRA_CLIENT_SECRET`
+- `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`
+- `ZOOM_CLIENT_ID` / `ZOOM_CLIENT_SECRET`
+
+API-key agents:
+
+- `FRESHDESK_API_KEY`
+- `FRESHDESK_DOMAIN`
+- `GREENHOUSE_API_KEY`
+
+## Deployment Steps
+
+1. SSH into EC2.
 
 ```bash
-ssh -i <key>.pem ubuntu@<ec2-host>
+ssh -i <key>.pem ubuntu@13.206.83.175
+```
+
+2. Pull the detached EC2 repo.
+
+```bash
 cd /home/ubuntu/app
-# pull/sync latest EC2 repo contents here
+git pull
 ```
 
-### Step 2: Configure Environment Files
-
-`/home/ubuntu/app/agents/teams-agent/.env`
-
-```bash
-GRAPH_TENANT_ID=41503967-0840-4715-9d4d-1741979db5d9
-GRAPH_CLIENT_ID=1f83edce-5c97-4110-b954-9234e87e5a03
-PORT=8100
-```
-
-Optional Twilio keys can be added to same file.
-
-`/home/ubuntu/app/agents/todo-agent/.env`
-
-```bash
-FIREBASE_SERVICE_ACCOUNT_KEY=/home/ubuntu/app/.secrets/serviceAccountKey.json
-PORT=8200
-```
-
-`/home/ubuntu/app/agents/google-agent/.env`
-
-```bash
-GOOGLE_CLIENT_ID=<google-client-id>
-GOOGLE_CLIENT_SECRET=<google-client-secret>
-GOOGLE_REDIRECT_URI=http://localhost:3000/api/google-auth/callback
-PORT=8300
-```
-
-### Step 3: Provision Firebase Service Account Key
+3. Place the Firebase service account.
 
 ```bash
 sudo mkdir -p /home/ubuntu/app/.secrets
@@ -145,7 +88,18 @@ sudo chown root:root /home/ubuntu/app/.secrets/serviceAccountKey.json
 sudo chmod 600 /home/ubuntu/app/.secrets/serviceAccountKey.json
 ```
 
-### Step 4: Run Deployment Script
+4. Fill in each agent `.env` file.
+
+At minimum every OAuth agent needs:
+
+```bash
+PORT=<service-port>
+AGENT_PUBLIC_BASE_URL=http://13.206.83.175
+AGENT_OAUTH_SHARED_SECRET=<same-secret-as-web-app>
+FIREBASE_SERVICE_ACCOUNT_KEY=/home/ubuntu/app/.secrets/serviceAccountKey.json
+```
+
+5. Run the deploy script.
 
 ```bash
 cd /home/ubuntu/app
@@ -153,192 +107,84 @@ chmod +x deploy.sh
 sudo ./deploy.sh
 ```
 
-### Step 5: Configure Nginx For Public IP
+## What `deploy.sh` Does
 
-The repository already includes IP-based routing for `13.206.83.175`.
-Re-copy config if needed, then validate and reload:
+- validates required directories
+- creates or updates per-agent Python virtualenvs
+- installs each agent’s requirements
+- installs and reloads all systemd services
+- installs and validates the Nginx config
+- runs local health checks
+- runs public health checks
+- probes public OAuth routes
 
-```bash
-sudo cp /home/ubuntu/app/nginx/sites-available/agents /etc/nginx/sites-available/agents
-sudo ln -sfn /etc/nginx/sites-available/agents /etc/nginx/sites-enabled/agents
-sudo nginx -t
-sudo systemctl restart nginx
-```
+## Public Route Summary
 
-### Step 6: TLS (Optional, Later)
+Health:
 
-Skip this until you attach a domain. Keep using HTTP on IP for now.
+- `/health`
+- `/teams/health`
+- `/todo/health`
+- `/google/health`
+- `/notion/health`
+- `/maps/health`
+- `/canva/health`
+- `/dayplanner/health`
+- `/discord/health`
+- `/dropbox/health`
+- `/freshdesk/health`
+- `/github/health`
+- `/gitlab/health`
+- `/greenhouse/health`
+- `/jira/health`
+- `/linkedin/health`
+- `/zoom/health`
 
-```bash
-sudo certbot --nginx -d teams.<your-domain> -d todo.<your-domain>
-```
+OAuth:
 
-### Step 7: Verify Runtime
+- `/teams/auth/*`
+- `/google/auth/*`
+- `/notion/auth/*`
+- `/canva/auth/*`
+- `/discord/auth/*`
+- `/dropbox/auth/*`
+- `/github/auth/*`
+- `/gitlab/auth/*`
+- `/jira/auth/*`
+- `/linkedin/auth/*`
+- `/zoom/auth/*`
+
+## Post-Deploy Verification
+
+Local:
 
 ```bash
 curl http://127.0.0.1:8100/health
-curl http://127.0.0.1:8200/health
 curl http://127.0.0.1:8300/health
-
-curl http://13.206.83.175/health
-curl http://13.206.83.175/todo/health
-curl http://13.206.83.175/google/health
-curl -X POST http://13.206.83.175/teams/action -H "Content-Type: application/json" -d '{"action":"make_call","contact":"test@example.com"}'
-curl -X POST http://13.206.83.175/todo/action -H "Content-Type: application/json" -d '{"taskId":"smoke-1","userId":"smoke-user","agentId":"todo-agent","action":"list_tasks"}'
-curl -X POST http://13.206.83.175/google/action -H "Content-Type: application/json" -d '{"taskId":"smoke-2","userId":"smoke-user","agentId":"google-agent","agent_type":"gmail","action":"read_emails","parameters":"last 5 emails"}'
-
-sudo systemctl status teams-agent --no-pager
-sudo systemctl status todo-agent --no-pager
-sudo systemctl status google-agent --no-pager
+curl http://127.0.0.1:8400/health
 ```
 
-## 6) Firebase Cloud Functions Integration
-
-Use backend-only calls. Browser should not call EC2 URLs directly.
-
-### Required Function Environment
-
-Set these in Cloud Functions runtime config or secret manager:
-
-- `TEAMS_AGENT_BASE_URL=http://13.206.83.175`
-- `TODO_AGENT_BASE_URL=http://13.206.83.175`
-- `AGENT_SHARED_SECRET=<strong-random-value>` (recommended)
-
-### Routing Pattern
-
-Implement one dispatcher in Cloud Functions (example name: `executeAgentTask`) that:
-
-1. Reads task payload (`taskId`, `userId`, `agentId`, `action`, params).
-2. Selects endpoint by `agentId` and action family.
-3. Sends signed HTTP request to EC2.
-4. Persists response/result back to Firestore task document.
-
-Reference implementation sketch:
-
-```ts
-import fetch from "node-fetch";
-
-const AGENT_ROUTES: Record<string, string> = {
-  "teams-agent": `${process.env.TEAMS_AGENT_BASE_URL}/teams/action`,
-  "email-agent": `${process.env.TEAMS_AGENT_BASE_URL}/email/action`,
-  "calendar-agent": `${process.env.TEAMS_AGENT_BASE_URL}/calendar/action`,
-  "todo-agent": `${process.env.TODO_AGENT_BASE_URL}/todo/action`,
-};
-
-export async function forwardToAgent(task: any) {
-  const url = AGENT_ROUTES[task.agentId];
-  if (!url) throw new Error(`Unsupported agentId: ${task.agentId}`);
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Agent-Secret": process.env.AGENT_SHARED_SECRET || "",
-    },
-    body: JSON.stringify(task),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Agent HTTP ${response.status}: ${text}`);
-  }
-
-  return response.json();
-}
-```
-
-### Reliability Guidance
-
-- Set function timeout >= 60s for Graph/API latency cases.
-- Add retry with capped exponential backoff for `429/502/503/504`.
-- Log `taskId`, `userId`, `agentId`, latency, and endpoint for traceability.
-
-## 7) Browser-Side Setup (Important)
-
-Browser must call your backend API/Cloud Function only.
-
-Do:
-
-- Browser -> Next.js API route / callable function -> EC2 agent
-
-Do not:
-
-- Browser -> `http://13.206.83.175/...` directly
-
-Reasons:
-
-- Protect secrets and routing logic.
-- Enforce authentication/authorization centrally.
-- Allow retries, redaction, and audit logging in backend layer.
-
-Example browser call to backend endpoint:
-
-```ts
-await fetch("/api/agent/execute", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    agentId: "todo-agent",
-    action: "add_task",
-    title: "Prepare sprint review",
-  }),
-});
-```
-
-## 8) Adding A New Agent On EC2 (Expansion SOP)
-
-When introducing `new-agent`:
-
-1. Add service code:
-   - Create `agents/new-agent/` with FastAPI app and `requirements.txt`.
-2. Add systemd unit:
-   - Create `systemd/new-agent.service` with unique port (example `8300`).
-3. Add Nginx route:
-   - Either new subdomain (`new-agent.<domain>`) or path routing.
-4. Update deployment script:
-   - Extend `deploy.sh` to create venv/install deps and enable service.
-5. Update Cloud Functions router:
-   - Map `agentId -> endpoint`.
-6. Add health checks and smoke tests:
-   - `/health`, one happy-path action, one failure-path action.
-7. Update docs:
-   - Add endpoint contracts to `API_DOCUMENTATION.md`.
-
-Minimal verification checklist before release:
-
-- `systemctl status new-agent` is active.
-- `curl http://13.206.83.175/<new-agent-path>/health` returns healthy.
-- Cloud Function route executes successfully.
-- Error responses are propagated and logged with task metadata.
-
-## 9) Operations and Troubleshooting
-
-Common commands:
+Public:
 
 ```bash
-sudo systemctl restart teams-agent
-sudo systemctl restart todo-agent
-sudo systemctl reload nginx
-
-journalctl -u teams-agent -f
-journalctl -u todo-agent -f
+curl http://13.206.83.175/teams/health
+curl http://13.206.83.175/google/health
+curl http://13.206.83.175/notion/health
+curl -i http://13.206.83.175/google/auth/login
+curl -i http://13.206.83.175/teams/auth/login
 ```
 
-If Nginx returns `502`:
+Service status:
 
-1. Check upstream service status (`systemctl status`).
-2. Validate local health (`curl http://127.0.0.1:<port>/health`).
-3. Validate Nginx syntax (`nginx -t`) and reload.
+```bash
+sudo systemctl status teams-agent --no-pager
+sudo systemctl status google-agent --no-pager
+sudo systemctl status notion-agent --no-pager
+```
 
-If Todo agent fails Firebase init:
+## Operational Notes
 
-1. Verify `/home/ubuntu/app/.secrets/serviceAccountKey.json` exists.
-2. Verify permissions `600`.
-3. Check logs for selected credential path.
-
-## 10) Security Notes
-
-- Store all API secrets in Secret Manager or secure env injection.
-- Restrict Security Group ingress to required ports only.
-- Prefer backend-authenticated calls with a shared header/token.
-- Rotate service credentials periodically.
+- EC2 OAuth login requires a signed `handoff` token from the web app/backend.
+- Action handlers can load saved provider credentials from Firestore by `userId`.
+- `canva-agent` is intentionally a coming-soon placeholder because the JS source of truth still behaves that way.
+- `freshdesk-agent` and `jira-agent` intentionally use JS-parity stub responses instead of live API behavior.

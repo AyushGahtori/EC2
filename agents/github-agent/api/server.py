@@ -8,12 +8,20 @@ Scopes: repo, read:user, user:email
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -55,6 +63,10 @@ class AgentTaskResponse(BaseModel):
     message: str | None = None
     data: dict | None = None
     displayName: str | None = None
+    auth_url: str | None = None
+    provider: str | None = None
+    agentId: str | None = None
+    bundleId: str | None = None
 
 
 @app.post("/github/action", response_model=AgentTaskResponse)
@@ -64,12 +76,21 @@ def execute_github_action(req: AgentTaskRequest) -> AgentTaskResponse:
     Calls the GitHub REST API v3 using the user's OAuth2 Bearer token.
     """
     action = req.action
-    token = req.access_token
+    credentials = resolve_provider_credentials(
+        user_id=req.userId,
+        provider="github",
+        access_token=req.access_token,
+    )
+    token = credentials.get("access_token")
 
     if not token:
         return AgentTaskResponse(
-            status="failed",
-            error="GitHub access token is missing. Please connect your GitHub account.",
+            **auth_required_response(
+                agent_slug="github",
+                agent_id="github-agent",
+                provider="github",
+                message="GitHub access token is missing. Please connect your GitHub account.",
+            )
         )
 
     # Mirrors JS headers exactly: Authorization, Accept, X-GitHub-Api-Version

@@ -8,6 +8,8 @@ Scopes: api, read_user, read_api
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from urllib.parse import quote
 
 import requests
@@ -15,6 +17,12 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -54,6 +62,10 @@ class AgentTaskResponse(BaseModel):
     message: str | None = None
     data: dict | None = None
     displayName: str | None = None
+    auth_url: str | None = None
+    provider: str | None = None
+    agentId: str | None = None
+    bundleId: str | None = None
 
 
 @app.post("/gitlab/action", response_model=AgentTaskResponse)
@@ -63,12 +75,21 @@ def execute_gitlab_action(req: AgentTaskRequest) -> AgentTaskResponse:
     Calls GitLab REST API v4 with Bearer token.
     """
     action = req.action
-    token = req.access_token
+    credentials = resolve_provider_credentials(
+        user_id=req.userId,
+        provider="gitlab",
+        access_token=req.access_token,
+    )
+    token = credentials.get("access_token")
 
     if not token:
         return AgentTaskResponse(
-            status="failed",
-            error="GitLab access token is missing. Please connect your GitLab account.",
+            **auth_required_response(
+                agent_slug="gitlab",
+                agent_id="gitlab-agent",
+                provider="gitlab",
+                message="GitLab access token is missing. Please connect your GitLab account.",
+            )
         )
 
     headers = {

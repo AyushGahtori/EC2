@@ -217,9 +217,14 @@ If the current message is continuing a pending request, merge it with the pendin
 
     async def refresh_google_access_token(self) -> bool:
         """Refresh the Google access token and persist it if possible."""
-        # For SnitchX, token refresh is handled by Firebase on the frontend.
-        # We simply flag that authentication is required.
-        return False
+        from google_client import GoogleAuthRequired, refresh_access_token
+
+        try:
+            self.access_token = refresh_access_token(self.refresh_token or None)
+            return True
+        except GoogleAuthRequired as exc:
+            self.auth_url = exc.auth_url
+            return False
 
     async def request_google_api(
         self,
@@ -232,8 +237,10 @@ If the current message is continuing a pending request, merge it with the pendin
         from google_client import acquire_google_token, GoogleAuthRequired
         
         try:
-            # Overwrite access token with the memory singleton from google_client
-            self.access_token = acquire_google_token()
+            self.access_token = acquire_google_token(
+                access_token=self.access_token or None,
+                refresh_token=self.refresh_token or None,
+            )
         except GoogleAuthRequired as exc:
             self.auth_url = exc.auth_url
             logger.warning("🔒 Auth Error [%s] Google sign-in required", self.agent_name)
@@ -261,7 +268,7 @@ If the current message is continuing a pending request, merge it with the pendin
                 # Token expired — try to refresh
                 from google_client import refresh_access_token
                 try:
-                    self.access_token = refresh_access_token()
+                    self.access_token = refresh_access_token(self.refresh_token or None)
                     continue  # retry with new token
                 except GoogleAuthRequired as exc:
                     self.auth_url = exc.auth_url

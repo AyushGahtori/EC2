@@ -10,12 +10,16 @@ Current deployed host (no domain yet):
 - Teams health: `GET http://13.206.83.175/health`
 - Todo health: `GET http://13.206.83.175/todo/health`
 - Google health: `GET http://13.206.83.175/google/health`
+- Notion health: `GET http://13.206.83.175/notion/health`
+- Maps health: `GET http://13.206.83.175/maps/health`
 
 Internal ports behind Nginx:
 
 - Teams service: `127.0.0.1:8100`
 - Todo service: `127.0.0.1:8200`
 - Google service: `127.0.0.1:8300`
+- Notion service: `127.0.0.1:8400`
+- Maps service: `127.0.0.1:8500`
 
 ## 2) Request/Response Conventions
 

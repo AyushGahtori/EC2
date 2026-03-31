@@ -28,7 +28,7 @@ class DriveAgent(BaseAgent):
         if action == "upload":
             return await self.upload_file(user_message, context)
         if action == "read":
-            return await self.read_file(user_message)
+            return await self.read_file(user_message, context)
         return await self.list_files()
 
     async def _determine_action(
@@ -204,8 +204,129 @@ class DriveAgent(BaseAgent):
             data={"file_path": str(file_path), "file_name": file_name},
         )
 
-    async def read_file(self, user_message: str) -> Dict[str, Any]:
-        return self.success(
-            summary="To read a file, please specify the exact file name. I'll find it in Drive and summarize its contents.",
-            data={"action": "read_requested"},
+    async def read_file(
+        self,
+        user_message: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        params = await self.extract_parameters(
+            user_message=user_message,
+            schema_description="""
+- query: file name or search phrase to identify the Drive file
+            """,
+            example_output='{"query": "Q3 report"}',
+            context=context,
         )
+        query = (params.get("query") or "").strip()
+        if not query:
+            return self.failure(
+                error="VALIDATION_ERROR",
+                message="Please specify the Google Drive file you want me to read or summarize.",
+            )
+
+        match = await self._find_file_match(query)
+        if isinstance(match, dict) and match.get("status") == "error":
+            return match
+        if not match:
+            return self.success(
+                summary=f"I could not find a Drive file matching '{query}'.",
+                data={"query": query},
+            )
+
+        file_text_response = await self._download_file_text(match)
+        if isinstance(file_text_response, dict) and file_text_response.get("status") == "error":
+            return file_text_response
+
+        if not file_text_response["content"]:
+            return self.failure(
+                error="UNSUPPORTED_FILE",
+                message=f"I found '{match['name']}', but I could not extract readable text from that file type.",
+                data={"file": match},
+            )
+
+        summary = await self.llm_complete(
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"User request: {user_message}\n\n"
+                        f"Drive file: {match['name']}\n"
+                        f"MIME type: {match.get('mimeType', 'unknown')}\n\n"
+                        f"File content:\n{file_text_response['content'][:6000]}"
+                    ),
+                }
+            ],
+            system_prompt=(
+                "Summarize the Drive file for the user. Include key points, decisions, tasks, deadlines, "
+                "and answer any explicit question from the user's request if the file text supports it."
+            ),
+            context=context,
+        )
+
+        return self.success(
+            summary=summary,
+            data={
+                "file": match,
+                "content_excerpt": file_text_response["content"][:3000],
+            },
+        )
+
+    async def _find_file_match(self, query: str) -> Optional[Dict[str, Any]]:
+        escaped_query = query.replace("'", "\\'")
+
+        try:
+            response = await self.request_google_api(
+                "GET",
+                f"{DRIVE_BASE_URL}/files",
+                params={
+                    "q": f"name contains '{escaped_query}'",
+                    "pageSize": 5,
+                    "fields": "files(id,name,mimeType,modifiedTime,webViewLink)",
+                    "orderBy": "modifiedTime desc",
+                },
+                retry_on_failure=True,
+            )
+        except Exception as exc:
+            return self.handle_google_exception("Drive", exc, data={"query": query})
+
+        if response.status_code != 200:
+            return self.handle_google_api_error("Drive", response, data={"query": query})
+
+        files = response.json().get("files", [])
+        return files[0] if files else None
+
+    async def _download_file_text(self, file_data: Dict[str, Any]) -> Dict[str, str] | Dict[str, Any]:
+        file_id = file_data["id"]
+        mime_type = file_data.get("mimeType", "")
+        export_mime_type = None
+        download_url = ""
+
+        if mime_type == "application/vnd.google-apps.document":
+            download_url = f"{DRIVE_BASE_URL}/files/{file_id}/export"
+            export_mime_type = "text/plain"
+        elif mime_type == "application/vnd.google-apps.spreadsheet":
+            download_url = f"{DRIVE_BASE_URL}/files/{file_id}/export"
+            export_mime_type = "text/csv"
+        elif mime_type.startswith("text/") or mime_type in {
+            "application/json",
+            "application/xml",
+            "text/csv",
+        }:
+            download_url = f"{DRIVE_BASE_URL}/files/{file_id}"
+        else:
+            return {"content": ""}
+
+        try:
+            response = await self.request_google_api(
+                "GET",
+                download_url,
+                params={"mimeType": export_mime_type, "alt": None if export_mime_type else "media"},
+                retry_on_failure=True,
+            )
+        except Exception as exc:
+            return self.handle_google_exception("Drive", exc, data={"file": file_data})
+
+        if response.status_code != 200:
+            return self.handle_google_api_error("Drive", response, data={"file": file_data})
+
+        return {"content": response.text}

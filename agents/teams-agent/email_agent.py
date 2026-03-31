@@ -12,7 +12,10 @@ def run_email_action(task_data: dict) -> dict:
     
     try:
         # Validate device auth triggers early implicitly
-        client = GraphClient()
+        client = GraphClient(
+            access_token=task_data.get("access_token"),
+            refresh_token=task_data.get("refresh_token"),
+        )
         _ = client.acquire_token()
     except DeviceFlowRequired as e:
         return {

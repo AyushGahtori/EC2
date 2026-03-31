@@ -78,6 +78,7 @@ class GoogleActionResponse(BaseModel):
     agent_type: str | None = None
     action: str | None = None
     result: dict | str | list | None = None
+    summary: str | None = None
     error: str | None = None
     execution_time_ms: float | None = None
 
@@ -191,6 +192,7 @@ async def google_action(data: GoogleActionRequest):
             agent_type=data.agent_type,
             action=data.action,
             result=result.get("data", result),
+            summary=result.get("summary"),
             execution_time_ms=(time.time() - start) * 1000,
             error=result.get("error")
         )

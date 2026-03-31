@@ -36,11 +36,17 @@ class GmailAgent(BaseAgent):
         if action == "draft":
             return await self.draft_email(user_message, context)
         if action == "summarize":
-            return await self.summarize_inbox()
+            return await self.summarize_inbox(user_message)
         if action == "reply":
             return await self.reply_email(user_message)
         if action == "list":
-            return await self.list_emails()
+            return await self.list_emails(user_message)
+        if action == "search":
+            return await self.search_emails(user_message, context)
+        if action == "read":
+            return await self.read_email(user_message, context)
+        if action in {"mark_read", "mark_as_read"}:
+            return await self.mark_email_as_read(user_message, context)
         return await self.list_emails()
 
     async def _determine_action(
@@ -50,7 +56,7 @@ class GmailAgent(BaseAgent):
     ) -> str:
         params = await self.extract_parameters(
             user_message=user_message,
-            schema_description='action: one of "send", "draft", "summarize", "reply", "list"',
+            schema_description='action: one of "send", "draft", "summarize", "reply", "list", "search", "read", "mark_read"',
             example_output='{"action": "send"}',
             context=context,
         )
@@ -148,7 +154,7 @@ class GmailAgent(BaseAgent):
         result["clear_pending_task"] = True
         return result
 
-    async def summarize_inbox(self) -> Dict[str, Any]:
+    async def summarize_inbox(self, user_message: str = "") -> Dict[str, Any]:
         """Fetch and summarize recent emails."""
         try:
             list_response = await self.request_google_api(
@@ -204,9 +210,9 @@ class GmailAgent(BaseAgent):
             data={"emails": email_summaries},
         )
 
-    async def list_emails(self) -> Dict[str, Any]:
+    async def list_emails(self, user_message: str = "") -> Dict[str, Any]:
         """List recent emails."""
-        return await self.summarize_inbox()
+        return await self.summarize_inbox(user_message)
 
     async def reply_email(self, user_message: str) -> Dict[str, Any]:
         """Reply to an email (requires thread context)."""
@@ -225,6 +231,278 @@ class GmailAgent(BaseAgent):
             ),
             data={"params": params, "note": "Full reply requires thread ID selection"},
         )
+
+    async def search_emails(
+        self,
+        user_message: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        params = await self.extract_parameters(
+            user_message=user_message,
+            schema_description="""
+- query: Gmail search query to find messages
+- count: maximum number of results to return (default 10, max 20)
+            """,
+            example_output='{"query": "from:alice budget", "count": 5}',
+            context=context,
+        )
+
+        query = self._clean_text_value(str(params.get("query", "")))
+        count = min(max(int(params.get("count", 10) or 10), 1), 20)
+        if not query:
+            return self.failure(
+                error="VALIDATION_ERROR",
+                message="Please tell me what email to search for.",
+            )
+
+        messages = await self._fetch_message_metadata_list(max_results=count, query=query)
+        if isinstance(messages, dict) and messages.get("status") == "error":
+            return messages
+
+        email_summaries = messages.get("emails", [])
+        if not email_summaries:
+            return self.success(
+                summary=f"No Gmail messages matched '{query}'.",
+                data={"emails": [], "query": query},
+            )
+
+        summary_text = "\n".join(
+            f"- {item['subject']} — {item['from']}"
+            for item in email_summaries
+        )
+        return self.success(
+            summary=f"Found {len(email_summaries)} Gmail messages for '{query}':\n{summary_text}",
+            data={"emails": email_summaries, "query": query},
+        )
+
+    async def read_email(
+        self,
+        user_message: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        params = await self.extract_parameters(
+            user_message=user_message,
+            schema_description="""
+- message_id: exact Gmail message id if known
+- query: Gmail search query or description of the message to read
+            """,
+            example_output='{"message_id": null, "query": "from:alice budget"}',
+            context=context,
+        )
+
+        message_id = self._clean_text_value(str(params.get("message_id", "")))
+        query = self._clean_text_value(str(params.get("query", "")))
+
+        if not message_id:
+            message_match = await self._find_message_match(query=query or user_message)
+            if isinstance(message_match, dict) and message_match.get("status") == "error":
+                return message_match
+            if not message_match:
+                return self.success(
+                    summary="I could not find a matching Gmail message to read.",
+                    data={"query": query or user_message},
+                )
+            message_id = message_match["id"]
+
+        detail_response = await self._get_message_details(message_id)
+        if isinstance(detail_response, dict) and detail_response.get("status") == "error":
+            return detail_response
+
+        detail = detail_response
+        headers = self._extract_headers(detail)
+        body = self._extract_message_body(detail.get("payload", {}))
+        snippet = detail.get("snippet", "")
+        text_for_summary = body or snippet or "No readable body was available."
+
+        summary = await self.llm_complete(
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"User request: {user_message}\n\n"
+                        f"From: {headers.get('From', 'Unknown')}\n"
+                        f"Subject: {headers.get('Subject', 'No Subject')}\n"
+                        f"Date: {headers.get('Date', 'Unknown')}\n\n"
+                        f"Email body:\n{text_for_summary[:5000]}"
+                    ),
+                }
+            ],
+            system_prompt=(
+                "You summarize Gmail messages for the user. Mention sender, topic, asks, deadlines, "
+                "and any follow-up needed. Keep it concise and factual."
+            ),
+            context=context,
+        )
+
+        return self.success(
+            summary=summary,
+            data={
+                "id": detail.get("id"),
+                "threadId": detail.get("threadId"),
+                "from": headers.get("From", "Unknown"),
+                "to": headers.get("To", ""),
+                "subject": headers.get("Subject", "No Subject"),
+                "date": headers.get("Date", "Unknown"),
+                "body": text_for_summary[:3000],
+                "labels": detail.get("labelIds", []),
+            },
+        )
+
+    async def mark_email_as_read(
+        self,
+        user_message: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        params = await self.extract_parameters(
+            user_message=user_message,
+            schema_description="""
+- message_id: exact Gmail message id if known
+- query: Gmail search query or description of the message to mark as read
+            """,
+            example_output='{"message_id": null, "query": "from:alice budget"}',
+            context=context,
+        )
+
+        message_id = self._clean_text_value(str(params.get("message_id", "")))
+        query = self._clean_text_value(str(params.get("query", "")))
+
+        if not message_id:
+            message_match = await self._find_message_match(query=query or user_message)
+            if isinstance(message_match, dict) and message_match.get("status") == "error":
+                return message_match
+            if not message_match:
+                return self.success(
+                    summary="I could not find a matching Gmail message to mark as read.",
+                    data={"query": query or user_message},
+                )
+            message_id = message_match["id"]
+
+        try:
+            response = await self.request_google_api(
+                "POST",
+                f"{GMAIL_BASE_URL}/messages/{message_id}/modify",
+                json={"removeLabelIds": ["UNREAD"]},
+            )
+        except Exception as exc:
+            return self.handle_google_exception("Gmail", exc, data={"message_id": message_id})
+
+        if response.status_code == 200:
+            return self.success(
+                summary="Marked the Gmail message as read.",
+                data={"message_id": message_id},
+            )
+
+        return self.handle_google_api_error("Gmail", response, data={"message_id": message_id})
+
+    async def _fetch_message_metadata_list(
+        self,
+        max_results: int = 10,
+        query: str = "",
+    ) -> Dict[str, Any]:
+        try:
+            list_response = await self.request_google_api(
+                "GET",
+                f"{GMAIL_BASE_URL}/messages",
+                params={"maxResults": max_results, "q": query or None, "labelIds": "INBOX" if not query else None},
+                retry_on_failure=True,
+            )
+        except Exception as exc:
+            return self.handle_google_exception("Gmail", exc, data={"query": query})
+
+        if list_response.status_code != 200:
+            return self.handle_google_api_error("Gmail", list_response, data={"query": query})
+
+        messages = list_response.json().get("messages", [])
+        email_summaries = []
+
+        for msg in messages[:max_results]:
+            detail_response = await self._get_message_details(msg["id"], format_type="metadata")
+            if isinstance(detail_response, dict) and detail_response.get("status") == "error":
+                return detail_response
+
+            headers = self._extract_headers(detail_response)
+            email_summaries.append(
+                {
+                    "id": msg["id"],
+                    "from": headers.get("From", "Unknown"),
+                    "subject": headers.get("Subject", "No Subject"),
+                    "date": headers.get("Date", "Unknown"),
+                    "snippet": detail_response.get("snippet", ""),
+                    "isUnread": "UNREAD" in (detail_response.get("labelIds", []) or []),
+                }
+            )
+
+        return {"emails": email_summaries}
+
+    async def _find_message_match(self, query: str) -> Optional[Dict[str, Any]]:
+        result = await self._fetch_message_metadata_list(max_results=5, query=query)
+        if result.get("status") == "error":
+            return result
+
+        emails = result.get("emails", [])
+        return emails[0] if emails else None
+
+    async def _get_message_details(
+        self,
+        message_id: str,
+        format_type: str = "full",
+    ) -> Dict[str, Any]:
+        try:
+            response = await self.request_google_api(
+                "GET",
+                f"{GMAIL_BASE_URL}/messages/{message_id}",
+                params={
+                    "format": format_type,
+                    "metadataHeaders": ["From", "Subject", "Date", "To"] if format_type == "metadata" else None,
+                },
+                retry_on_failure=True,
+            )
+        except Exception as exc:
+            return self.handle_google_exception("Gmail", exc, data={"message_id": message_id})
+
+        if response.status_code != 200:
+            return self.handle_google_api_error("Gmail", response, data={"message_id": message_id})
+
+        return response.json()
+
+    def _extract_headers(self, detail: Dict[str, Any]) -> Dict[str, str]:
+        return {
+            header["name"]: header["value"]
+            for header in detail.get("payload", {}).get("headers", [])
+        }
+
+    def _extract_message_body(self, payload: Dict[str, Any]) -> str:
+        if payload.get("body", {}).get("data"):
+            return self._decode_body(payload["body"]["data"])
+
+        parts = payload.get("parts") or []
+        for mime_type in ("text/plain", "text/html"):
+            for part in parts:
+                if part.get("mimeType") == mime_type and part.get("body", {}).get("data"):
+                    body = self._decode_body(part["body"]["data"])
+                    if mime_type == "text/html":
+                        body = re.sub(r"<[^>]+>", " ", body)
+                        body = re.sub(r"\s+", " ", body).strip()
+                    return body
+
+        for part in parts:
+            nested_parts = part.get("parts") or []
+            if nested_parts:
+                body = self._extract_message_body(part)
+                if body:
+                    return body
+
+        return ""
+
+    def _decode_body(self, encoded_body: str) -> str:
+        padding = len(encoded_body) % 4
+        if padding:
+            encoded_body += "=" * (4 - padding)
+
+        try:
+            return base64.urlsafe_b64decode(encoded_body.encode("utf-8")).decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
 
     async def _resolve_email_params(
         self,

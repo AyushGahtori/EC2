@@ -7,7 +7,10 @@ def run_calendar_action(task_data: dict) -> dict:
     action = task_data.get("action", "")
     
     try:
-        client = GraphClient()
+        client = GraphClient(
+            access_token=task_data.get("access_token"),
+            refresh_token=task_data.get("refresh_token"),
+        )
         _ = client.acquire_token()
     except DeviceFlowRequired as e:
         return {

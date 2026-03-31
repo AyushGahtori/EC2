@@ -1,21 +1,17 @@
 """
-Google OAuth 2.0 — Localhost Redirect Flow (like teams-agent's MSAL pattern).
+Google OAuth 2.0 helpers for the Google agent.
 
-Instead of the Device Code flow (which requires special GCP project config),
-this uses the standard "installed app" redirect to http://localhost:<port>/callback.
-
-Flow:
-1. Agent finds no token → raises AuthRequired with a browser URL.
-2. User clicks the URL → Google consent screen → redirects to localhost callback.
-3. The /auth/callback route on this server catches the code and exchanges it for tokens.
-4. Token is stored in memory (auth_store) for subsequent requests.
+The production SnitchX flow passes per-user access and refresh tokens down from
+Firestore. We still keep the in-memory auth store for local/manual debugging so
+engineers can authorize the standalone FastAPI server without the full app.
 """
 
 import os
 import time
 import urllib.parse
-import httpx
 from typing import Any, Dict
+
+import httpx
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
@@ -28,7 +24,6 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/contacts.readonly",
 ]
 
-# The redirect URI must match what's registered in Google Cloud Console
 REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8300/auth/callback")
 
 auth_store: Dict[str, Any] = {
@@ -40,6 +35,7 @@ auth_store: Dict[str, Any] = {
 
 class GoogleAuthRequired(Exception):
     """Raised when no valid Google token exists and user must authenticate."""
+
     def __init__(self, auth_url: str):
         self.auth_url = auth_url
         super().__init__("Google sign-in required")
@@ -52,14 +48,16 @@ def build_auth_url() -> str:
         "redirect_uri": REDIRECT_URI,
         "response_type": "code",
         "scope": " ".join(GOOGLE_SCOPES),
-        "access_type": "offline",   # gets us a refresh_token
-        "prompt": "consent",        # always show consent to guarantee refresh_token
+        "access_type": "offline",
+        "prompt": "consent",
     }
     return f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
 
 
-def exchange_code_for_tokens(code: str) -> dict:
+def exchange_code_for_tokens(code: str, redirect_uri: str | None = None) -> dict:
     """Exchange the authorization code for access + refresh tokens."""
+    effective_redirect_uri = (redirect_uri or REDIRECT_URI).strip()
+
     response = httpx.post(
         "https://oauth2.googleapis.com/token",
         data={
@@ -67,7 +65,7 @@ def exchange_code_for_tokens(code: str) -> dict:
             "client_secret": GOOGLE_CLIENT_SECRET,
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": REDIRECT_URI,
+            "redirect_uri": effective_redirect_uri,
         },
     )
     response.raise_for_status()
@@ -80,10 +78,11 @@ def exchange_code_for_tokens(code: str) -> dict:
     return data
 
 
-def refresh_access_token() -> str:
-    """Use the refresh token to get a new access token."""
-    rt = auth_store.get("refresh_token")
-    if not rt:
+def refresh_access_token(refresh_token: str | None = None) -> str:
+    """Use a refresh token to get a new access token."""
+    using_global_store = refresh_token is None
+    resolved_refresh_token = refresh_token or auth_store.get("refresh_token")
+    if not resolved_refresh_token:
         raise GoogleAuthRequired(build_auth_url())
 
     response = httpx.post(
@@ -91,41 +90,52 @@ def refresh_access_token() -> str:
         data={
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "refresh_token": rt,
+            "refresh_token": resolved_refresh_token,
             "grant_type": "refresh_token",
         },
     )
 
     if response.status_code != 200:
-        # Refresh token revoked or expired → force re-auth
-        auth_store["access_token"] = None
-        auth_store["refresh_token"] = None
+        if using_global_store:
+            auth_store["access_token"] = None
+            auth_store["refresh_token"] = None
+            auth_store["expires_at"] = 0
         raise GoogleAuthRequired(build_auth_url())
 
     data = response.json()
-    auth_store["access_token"] = data["access_token"]
-    auth_store["expires_at"] = time.time() + data.get("expires_in", 3600)
+    if using_global_store:
+        auth_store["access_token"] = data["access_token"]
+        auth_store["expires_at"] = time.time() + data.get("expires_in", 3600)
     return data["access_token"]
 
 
-def acquire_google_token() -> str:
+def acquire_google_token(
+    access_token: str | None = None,
+    refresh_token: str | None = None,
+) -> str:
     """
-    Get a valid Google access token.
-    Raises GoogleAuthRequired with a browser URL if the user hasn't authenticated.
+    Resolve a usable Google access token.
+
+    Order of preference:
+    1. Access token passed from SnitchX runtime
+    2. Refresh token passed from SnitchX runtime
+    3. Local debug token store
     """
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise RuntimeError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required in .env")
 
+    if access_token:
+        return access_token
+
+    if refresh_token:
+        return refresh_access_token(refresh_token)
+
     token = auth_store.get("access_token")
     expires_at = auth_store.get("expires_at", 0)
-
-    # If we have a token and it's not expired (with 60s buffer), use it
     if token and time.time() < (expires_at - 60):
         return token
 
-    # Try refreshing if we have a refresh token
     if auth_store.get("refresh_token"):
         return refresh_access_token()
 
-    # No token at all → user must authenticate
     raise GoogleAuthRequired(build_auth_url())

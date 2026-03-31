@@ -96,6 +96,8 @@ class TeamsActionRequest(BaseModel):
     taskId: str | None = None
     userId: str | None = None
     agentId: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
 
 
 class TeamsActionResponse(BaseModel):

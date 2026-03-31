@@ -47,7 +47,7 @@ The following updates were applied in this repository:
 - Fixed credential path fallback in `agents/todo-agent/db/firestore.py`.
 - New behavior:
   1. Check `FIREBASE_SERVICE_ACCOUNT_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` if file exists.
-  2. Fallback to `/app/.secrets/serviceAccountKey.json`.
+  2. Fallback to `/home/ubuntu/app/.secrets/serviceAccountKey.json`.
   3. Fallback to repo key if present.
   4. Otherwise initialize with default credentials.
 
@@ -123,7 +123,7 @@ Optional Twilio keys can be added to same file.
 `/home/ubuntu/app/agents/todo-agent/.env`
 
 ```bash
-FIREBASE_SERVICE_ACCOUNT_KEY=/app/.secrets/serviceAccountKey.json
+FIREBASE_SERVICE_ACCOUNT_KEY=/home/ubuntu/app/.secrets/serviceAccountKey.json
 PORT=8200
 ```
 
@@ -139,10 +139,10 @@ PORT=8300
 ### Step 3: Provision Firebase Service Account Key
 
 ```bash
-sudo mkdir -p /app/.secrets
-sudo cp /home/ubuntu/app/ai-everyone/serviceAccountKey.json /app/.secrets/serviceAccountKey.json
-sudo chown root:root /app/.secrets/serviceAccountKey.json
-sudo chmod 600 /app/.secrets/serviceAccountKey.json
+sudo mkdir -p /home/ubuntu/app/.secrets
+sudo cp /path/to/serviceAccountKey.json /home/ubuntu/app/.secrets/serviceAccountKey.json
+sudo chown root:root /home/ubuntu/app/.secrets/serviceAccountKey.json
+sudo chmod 600 /home/ubuntu/app/.secrets/serviceAccountKey.json
 ```
 
 ### Step 4: Run Deployment Script
@@ -332,7 +332,7 @@ If Nginx returns `502`:
 
 If Todo agent fails Firebase init:
 
-1. Verify `/app/.secrets/serviceAccountKey.json` exists.
+1. Verify `/home/ubuntu/app/.secrets/serviceAccountKey.json` exists.
 2. Verify permissions `600`.
 3. Check logs for selected credential path.
 

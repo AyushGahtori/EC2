@@ -1,0 +1,19 @@
+[Unit]
+Description=Notion Agent FastAPI Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/app/agents/notion-agent
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/ubuntu/app/agents/notion-agent/.env
+ExecStart=/home/ubuntu/app/agents/notion-agent/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8400 --workers 1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

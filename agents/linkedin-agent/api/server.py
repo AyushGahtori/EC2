@@ -37,7 +37,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-LINKEDIN_API = "https://api.linkedin.com/v2"
+LINKEDIN_API_V2 = "https://api.linkedin.com/v2"
+LINKEDIN_API_REST = "https://api.linkedin.com/rest"
+LINKEDIN_API_VERSION = "202405"
 
 
 class AgentTaskRequest(BaseModel):
@@ -125,28 +127,53 @@ def execute_linkedin_action(req: AgentTaskRequest) -> AgentTaskResponse:
                 except (ValueError, TypeError):
                     pass
 
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "X-Restli-Protocol-Version": "2.0.0",
+                "LinkedIn-Version": LINKEDIN_API_VERSION,
+                "Content-Type": "application/json",
+            }
+            body = {
+                "author": urn,
+                "lifecycleState": "PUBLISHED",
+                "specificContent": {
+                    "com.linkedin.ugc.ShareContent": {
+                        "shareCommentary": {"text": req.content},
+                        "shareMediaCategory": "NONE",
+                    }
+                },
+                "visibility": {
+                    "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+                },
+            }
+
+            # Try legacy UGC endpoint first for parity with existing flow.
             response = requests.post(
-                f"{LINKEDIN_API}/ugcPosts",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "X-Restli-Protocol-Version": "2.0.0",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "author": urn,
-                    "lifecycleState": "PUBLISHED",
-                    "specificContent": {
-                        "com.linkedin.ugc.ShareContent": {
-                            "shareCommentary": {"text": req.content},
-                            "shareMediaCategory": "NONE",
-                        }
-                    },
-                    "visibility": {
-                        "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
-                    },
-                },
+                f"{LINKEDIN_API_V2}/ugcPosts",
+                headers=headers,
+                json=body,
                 timeout=15,
             )
+
+            # If LinkedIn rejects UGC versioning, retry through REST posts API.
+            if response.status_code in {400, 403, 404} and "NO_VERSION" in response.text:
+                response = requests.post(
+                    f"{LINKEDIN_API_REST}/posts",
+                    headers=headers,
+                    json={
+                        "author": urn,
+                        "commentary": req.content,
+                        "visibility": "PUBLIC",
+                        "distribution": {
+                            "feedDistribution": "MAIN_FEED",
+                            "targetEntities": [],
+                            "thirdPartyDistributionChannels": [],
+                        },
+                        "lifecycleState": "PUBLISHED",
+                        "isReshareDisabledByAuthor": False,
+                    },
+                    timeout=15,
+                )
 
             if response.status_code == 422:
                 api_error = response.json()
@@ -192,7 +219,8 @@ def execute_linkedin_action(req: AgentTaskRequest) -> AgentTaskResponse:
             status="failed",
             error=(
                 "Failed to post on LinkedIn. Error: "
-                f"{api_error.get('message') or exc.response.text}. "
+                f"{api_error.get('message') or exc.response.text} "
+                f"(HTTP {exc.response.status_code}). "
                 "Check permissions if this is the first attempt."
             ),
         )

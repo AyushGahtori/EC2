@@ -87,6 +87,9 @@ class GraphClient:
         if self.access_token:
             return self.access_token
 
+        if self.refresh_token:
+            return self._refresh_delegated_token()
+
         token = auth_store.get("token")
         if token and isinstance(token, str):
             self.access_token = token

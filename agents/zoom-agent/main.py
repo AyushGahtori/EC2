@@ -14,4 +14,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8011"))
     print(f"Starting Zoom Agent on port {port}")
-    uvicorn.run("api.server:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)

@@ -94,6 +94,16 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location = /teams/health {
+        proxy_pass http://teams_agent/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location = /teams/action {
         proxy_pass http://teams_agent/teams/action;
         proxy_http_version 1.1;
@@ -133,9 +143,37 @@ server {
         proxy_read_timeout 60s;
     }
 
+    location /teams/auth/ {
+        rewrite ^/teams/(.*)$ /$1 break;
+        proxy_pass http://teams_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location /google/auth/ {
         rewrite ^/google/(.*)$ /$1 break;
         proxy_pass http://google_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location /notion/auth/ {
+        rewrite ^/notion/(.*)$ /$1 break;
+        proxy_pass http://notion_agent;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
@@ -262,6 +300,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /canva/auth/ {
+        rewrite ^/canva/(.*)$ /$1 break;
+        proxy_pass http://canva_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /dayplanner/action {
         proxy_pass http://dayplanner_agent/dayplanner/action;
         proxy_http_version 1.1;
@@ -308,6 +360,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /discord/auth/ {
+        rewrite ^/discord/(.*)$ /$1 break;
+        proxy_pass http://discord_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /dropbox/action {
         proxy_pass http://dropbox_agent/dropbox/action;
         proxy_http_version 1.1;
@@ -329,6 +395,20 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /dropbox/auth/ {
+        rewrite ^/dropbox/(.*)$ /$1 break;
+        proxy_pass http://dropbox_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
     }
 
     location = /freshdesk/action {
@@ -377,6 +457,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /github/auth/ {
+        rewrite ^/github/(.*)$ /$1 break;
+        proxy_pass http://github_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /gitlab/action {
         proxy_pass http://gitlab_agent/gitlab/action;
         proxy_http_version 1.1;
@@ -398,6 +492,20 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /gitlab/auth/ {
+        rewrite ^/gitlab/(.*)$ /$1 break;
+        proxy_pass http://gitlab_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
     }
 
     location = /greenhouse/action {
@@ -446,6 +554,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /jira/auth/ {
+        rewrite ^/jira/(.*)$ /$1 break;
+        proxy_pass http://jira_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /linkedin/action {
         proxy_pass http://linkedin_agent/linkedin/action;
         proxy_http_version 1.1;
@@ -469,6 +591,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /linkedin/auth/ {
+        rewrite ^/linkedin/(.*)$ /$1 break;
+        proxy_pass http://linkedin_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /zoom/action {
         proxy_pass http://zoom_agent/zoom/action;
         proxy_http_version 1.1;
@@ -490,5 +626,19 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /zoom/auth/ {
+        rewrite ^/zoom/(.*)$ /$1 break;
+        proxy_pass http://zoom_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
     }
 }

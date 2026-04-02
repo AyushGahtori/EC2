@@ -23,6 +23,11 @@ upstream maps_agent {
     keepalive 16;
 }
 
+upstream emergency_response_agent {
+    server 127.0.0.1:8510;
+    keepalive 16;
+}
+
 upstream canva_agent {
     server 127.0.0.1:8001;
     keepalive 16;
@@ -269,6 +274,29 @@ server {
 
     location = /maps/health {
         proxy_pass http://maps_agent/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /emergency/action {
+        proxy_pass http://emergency_response_agent/emergency/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /emergency/health {
+        proxy_pass http://emergency_response_agent/health;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

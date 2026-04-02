@@ -1,0 +1,19 @@
+[Unit]
+Description=Emergency Response Agent FastAPI Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/app/agents/emergency-response-agent
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/ubuntu/app/agents/emergency-response-agent/.env
+ExecStart=/home/ubuntu/app/agents/emergency-response-agent/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8510 --workers 1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

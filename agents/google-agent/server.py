@@ -98,6 +98,53 @@ AGENT_MAP = {
 }
 
 
+def _normalize_gmail_action(action: str) -> str:
+    raw = (action or "").strip().lower()
+    if raw in {"send", "send_email", "compose", "compose_email", "mail", "email"}:
+        return "send"
+    if raw in {"draft", "create_draft", "draft_email"}:
+        return "draft"
+    if raw in {"summarize", "summarize_inbox", "inbox_summary"}:
+        return "summarize"
+    if raw in {"list", "list_emails", "inbox"}:
+        return "list"
+    if raw in {"reply", "reply_email"}:
+        return "reply"
+    if raw in {"search", "search_emails"}:
+        return "search"
+    if raw in {"read", "read_email"}:
+        return "read"
+    if raw in {"mark_read", "mark_as_read", "mark_email_as_read"}:
+        return "mark_read"
+    return raw or "list"
+
+
+def _normalize_drive_action(action: str) -> str:
+    raw = (action or "").strip().lower()
+    if raw in {"list", "list_files", "get_files", "list_documents"}:
+        return "list"
+    if raw in {"list_pdf_files", "list_pdfs", "pdf_list", "list_pdf"}:
+        return "list_pdf"
+    if raw in {"list_folder_contents", "list_folder", "open_folder", "open_directory", "browse_folder"}:
+        return "list_folder"
+    if raw in {"search", "search_files", "find_file", "find_files"}:
+        return "search"
+    if raw in {"read", "read_file", "summarize_file", "summarize_doc", "summarize_document"}:
+        return "read"
+    if raw in {"upload", "upload_file"}:
+        return "upload"
+    return raw or "list"
+
+
+def _normalize_action(agent_type: str, action: str) -> str:
+    normalized_agent_type = (agent_type or "").strip().lower()
+    if normalized_agent_type == "gmail":
+        return _normalize_gmail_action(action)
+    if normalized_agent_type == "drive":
+        return _normalize_drive_action(action)
+    return (action or "").strip()
+
+
 def _google_auth_required(message: str) -> dict:
     return auth_required_response(
         agent_slug="google",
@@ -149,6 +196,8 @@ async def google_action(data: GoogleActionRequest):
             ),
         )
 
+    normalized_action = _normalize_action(data.agent_type, data.action)
+
     try:
         agent = agent_class(
             access_token=access_token or "",
@@ -156,10 +205,14 @@ async def google_action(data: GoogleActionRequest):
             refresh_token=refresh_token or "",
         )
 
-        user_message = f"{data.action} {data.parameters or ''}"
+        user_message = f"{normalized_action} {data.parameters or ''}".strip()
         result = await agent.handle(
             user_message=user_message,
-            context={"direct": True, "taskId": data.taskId},
+            context={
+                "direct": True,
+                "taskId": data.taskId,
+                "forced_action": normalized_action,
+            },
         )
 
         if result.get("status") == "action_required":
@@ -174,7 +227,7 @@ async def google_action(data: GoogleActionRequest):
             status=result.get("status", "success"),
             type=f"google_{data.agent_type}",
             agent_type=data.agent_type,
-            action=data.action,
+            action=normalized_action,
             result=result.get("data", result),
             summary=result.get("summary"),
             execution_time_ms=(time.time() - start) * 1000,

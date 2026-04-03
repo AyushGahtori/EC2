@@ -31,6 +31,7 @@ AGENT_DIRS=(
     "notion-agent"
     "maps-agent"
     "emergency-response-agent"
+    "strata-agent"
     "canva-agent"
     "day-planner-agent"
     "discord-agent"
@@ -161,6 +162,7 @@ check_health "google-agent" 8300
 check_health "notion-agent" 8400
 check_health "maps-agent" 8500
 check_health "emergency-response-agent" 8510
+check_health "strata-agent" 8012
 check_health "canva-agent" 8001
 check_health "day-planner-agent" 8002
 check_health "discord-agent" 8003
@@ -181,6 +183,7 @@ check_nginx "/google/health"
 check_nginx "/notion/health"
 check_nginx "/maps/health"
 check_nginx "/emergency/health"
+check_nginx "/strata/health"
 check_nginx "/canva/health"
 check_nginx "/dayplanner/health"
 check_nginx "/discord/health"
@@ -200,7 +203,7 @@ done
 
 info "================================================================"
 info "Deployment complete."
-info "All 17 agent services are configured and started."
+info "All 18 agent services are configured and started."
 info ""
 info "Next steps:"
 info "  1. Copy your serviceAccountKey.json to ${SECRETS_DIR}/serviceAccountKey.json"

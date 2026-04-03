@@ -2,6 +2,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -181,6 +182,7 @@ class EmergencyResponseAgent:
             call_emergency=True,
         )
 
+        email_subject = self._build_emergency_subject(description, severity)
         emergency_message = self._build_emergency_message(description, severity, lat, lng, hospitals)
 
         return {
@@ -197,7 +199,7 @@ class EmergencyResponseAgent:
             "ambulanceNumber": "108",
             "share": {
                 "whatsappUrl": f"https://wa.me/?text={requests.utils.quote(emergency_message)}",
-                "emailSubject": "Emergency alert - immediate assistance required",
+                "emailSubject": email_subject,
                 "emailBody": emergency_message,
                 "copyMessage": emergency_message,
             },
@@ -274,21 +276,45 @@ class EmergencyResponseAgent:
         lng: float | None = None,
         hospitals: list[dict[str, Any]] | None = None,
     ) -> str:
-        lines = [
-            "EMERGENCY ALERT",
-            f"Severity: {severity.severity.upper()}",
-            f"Description: {description or 'Medical emergency reported.'}",
-            f"Advice: {severity.advice}",
-        ]
-        if lat is not None and lng is not None:
-            lines.append(f"Location: https://maps.google.com/?q={lat},{lng}")
+        short_desc = (description or "Medical emergency reported.").strip()
+        if len(short_desc) > 260:
+            short_desc = short_desc[:257] + "..."
+
+        time_label = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        location_url = f"https://maps.google.com/?q={lat},{lng}" if lat is not None and lng is not None else "Not available"
+
+        nearest_name = "Not available"
+        nearest_distance = ""
         if hospitals:
             nearest = hospitals[0]
-            lines.append(
-                f"Nearest hospital: {nearest.get('name')} ({nearest.get('distanceLabel')})"
-            )
-        lines.append("Call ambulance immediately: 108")
+            nearest_name = str(nearest.get("name") or "Unknown hospital")
+            nearest_distance = str(nearest.get("distanceLabel") or "").strip()
+
+        lines = [
+            "EMERGENCY ALERT",
+            "",
+            f"Time: {time_label}",
+            f"Severity: {severity.severity.upper()} (score {severity.score}/100)",
+            f"Reported situation: {short_desc}",
+            "",
+            "Immediate advice:",
+            f"- {severity.advice}",
+            "- Call ambulance immediately: 108",
+            "",
+            "Live location:",
+            f"- {location_url}",
+            "",
+            "Nearest hospital:",
+            f"- {nearest_name}{f' ({nearest_distance})' if nearest_distance else ''}",
+            "",
+            "Please contact me urgently and share this with nearby responders.",
+        ]
         return "\n".join(lines)
+
+    def _build_emergency_subject(self, description: str, severity: SeverityResult) -> str:
+        description_tokens = [token for token in re.findall(r"[a-zA-Z]+", description or "") if len(token) > 2]
+        keyword = description_tokens[0].capitalize() if description_tokens else "Medical"
+        return f"[{severity.severity.upper()}] Emergency Alert - {keyword} - Immediate Attention Needed"
 
     def _normalize(self, text: str) -> str:
         return re.sub(r"[^a-z0-9 ]", " ", text.lower())

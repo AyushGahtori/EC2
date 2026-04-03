@@ -53,6 +53,27 @@ def _callback_url(request: Request, agent_slug: str) -> str:
     return f"{_forwarded_origin(request)}/{agent_slug}/auth/callback"
 
 
+def _effective_redirect_uri(provider: str, request: Request, agent_slug: str) -> str:
+    overrides = {
+        "google": _get_env("GOOGLE_REDIRECT_URI"),
+        "microsoft": _get_env("MICROSOFT_REDIRECT_URI"),
+        "notion": _get_env("NOTION_REDIRECT_URI"),
+        "github": _get_env("GITHUB_REDIRECT_URI"),
+        "gitlab": _get_env("GITLAB_REDIRECT_URI"),
+        "discord": _get_env("DISCORD_REDIRECT_URI"),
+        "dropbox": _get_env("DROPBOX_REDIRECT_URI"),
+        "atlassian": _get_env("JIRA_REDIRECT_URI"),
+        "linkedin": _get_env("LINKEDIN_REDIRECT_URI"),
+        "zoom": _get_env("ZOOM_REDIRECT_URI"),
+        "canva": _get_env("CANVA_REDIRECT_URI"),
+    }
+    override = overrides.get(provider, "")
+    if override:
+        return override
+
+    return _callback_url(request, agent_slug)
+
+
 def _pkce_pair() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(72)
     digest = hashlib.sha256(verifier.encode("utf-8")).digest()
@@ -107,7 +128,7 @@ def _build_auth_url(
     state_id: str,
     pkce_challenge: str | None = None,
 ) -> str:
-    redirect_uri = _callback_url(request, agent_slug)
+    redirect_uri = _effective_redirect_uri(provider, request, agent_slug)
     client_id = _client_id(provider)
     if not client_id:
         raise HTTPException(status_code=500, detail=f"OAuth client ID is missing for {provider}.")
@@ -246,7 +267,7 @@ def _exchange_code(
     scopes: list[str],
     pkce_verifier: str | None = None,
 ) -> dict[str, Any]:
-    redirect_uri = _callback_url(request, agent_slug)
+    redirect_uri = _effective_redirect_uri(provider, request, agent_slug)
     client_id = _client_id(provider)
     client_secret = _client_secret(provider)
 

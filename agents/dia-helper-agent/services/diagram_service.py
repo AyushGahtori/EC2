@@ -51,7 +51,7 @@ def _build_fallback_mermaid(prompt: str, diagram_type: str, project_context: str
         actor_a = "User"
         actor_b = "System"
         actor_c = "Output"
-        return "\n.join(
+        return "\n".join(
             [
                 "sequenceDiagram",
                 f"    participant {actor_a}",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import FastAPI
@@ -7,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from schemas import DiaHelperActionRequest, DiaHelperActionResponse
 from services.diagram_service import generate_project_diagram
+
+logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
 app = FastAPI(
     title="Dia Helper Agent API (EC2)",
@@ -27,8 +30,15 @@ app.add_middleware(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "healthy", "agent": "dia-helper-agent", "version": "1.0.0"}
+def health() -> dict:
+    api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    return {
+        "status": "healthy",
+        "agent": "dia-helper-agent",
+        "version": "1.0.0",
+        "gemini_key_set": bool(api_key),
+        "gemini_key_prefix": api_key[:8] + "..." if api_key else "NOT SET",
+    }
 
 
 @app.post("/diahelper/action", response_model=DiaHelperActionResponse)

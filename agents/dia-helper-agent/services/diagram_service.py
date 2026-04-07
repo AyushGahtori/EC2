@@ -217,10 +217,13 @@ async def _ask_gemini(prompt: str) -> str | None:
     for model in models_to_try:
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         try:
+            print(f"[DIA_HELPER] Trying Gemini model {model} ...")
             logger.info("Trying Gemini model %s ...", model)
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(f"{endpoint}?key={api_key}", json=body)
+                print(f"[DIA_HELPER] Model {model} response status: {response.status_code}")
                 if response.status_code == 503 or response.status_code == 429:
+                    print(f"[DIA_HELPER] Model {model} returned {response.status_code}, trying next...")
                     logger.warning("Model %s returned %s, trying next...", model, response.status_code)
                     last_error = f"HTTP {response.status_code}"
                     continue

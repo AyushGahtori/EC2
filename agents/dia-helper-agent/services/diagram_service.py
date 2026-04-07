@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 import httpx
+
+logger = logging.getLogger("dia-helper")
 
 SUPPORTED_DIAGRAM_TYPES = [
     "flowchart",
@@ -100,7 +103,7 @@ def _build_fallback_mermaid(prompt: str, diagram_type: str, project_context: str
     nodes: List[Tuple[str, str]] = []
     for index, label in enumerate(labels):
         node_id = chr(ord("A") + index)
-        safe_label = re.sub(r'["{}\[\]]', "", label)[:42]
+        safe_label = re.sub(r'["{}[\]]', "", label)[:42]
         nodes.append((node_id, safe_label))
 
     edges = [
@@ -133,6 +136,11 @@ def _ensure_mermaid(
     cleaned = _clean_text(raw_text)
     if not cleaned:
         return _build_fallback_mermaid(prompt, fallback_type, project_context)
+
+    # Strip markdown fences
+    cleaned = re.sub(r"^```mermaid\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = cleaned.strip()
 
     if any(cleaned.startswith(prefix) for prefix in SUPPORTED_DIAGRAM_TYPES):
         return cleaned
@@ -178,13 +186,24 @@ class DiaDiagram:
     sources: List[Dict[str, Any]]
 
 
+GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
+
+
 async def _ask_gemini(prompt: str) -> str | None:
     api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
-    model = os.getenv("GEMINI_MODEL_DIAGRAM", os.getenv("GEMINI_MODEL_PRO", "gemini-2.5-pro"))
     if not api_key:
+        logger.warning("GEMINI_API_KEY is not set — skipping LLM call")
         return None
 
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    # Use configured model first, then try fallbacks
+    configured_model = os.getenv("GEMINI_MODEL_DIAGRAM", os.getenv("GEMINI_MODEL", ""))
+    models_to_try = []
+    if configured_model and configured_model.strip():
+        models_to_try.append(configured_model.strip())
+    for m in GEMINI_MODELS:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
     body = {
         "contents": [
             {
@@ -194,21 +213,47 @@ async def _ask_gemini(prompt: str) -> str | None:
         ]
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(f"{endpoint}?key={api_key}", json=body)
-            response.raise_for_status()
-    except Exception:
-        return None
+    last_error = None
+    for model in models_to_try:
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            logger.info("Trying Gemini model %s ...", model)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(f"{endpoint}?key={api_key}", json=body)
+                if response.status_code == 503 or response.status_code == 429:
+                    logger.warning("Model %s returned %s, trying next...", model, response.status_code)
+                    last_error = f"HTTP {response.status_code}"
+                    continue
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Model %s HTTP error: %s", model, exc)
+            last_error = str(exc)
+            continue
+        except Exception as exc:
+            logger.warning("Model %s network error: %s", model, exc)
+            last_error = str(exc)
+            continue
 
-    payload = response.json()
-    candidates = payload.get("candidates") or []
-    if not candidates:
-        return None
-    parts = (((candidates[0] or {}).get("content") or {}).get("parts")) or []
-    texts = [str(part.get("text") or "").strip() for part in parts if isinstance(part, dict)]
-    merged = "\n".join([text for text in texts if text])
-    return merged or None
+        payload = response.json()
+        candidates = payload.get("candidates") or []
+        if not candidates:
+            logger.warning("Model %s returned no candidates", model)
+            last_error = "no candidates"
+            continue
+
+        parts = (((candidates[0] or {}).get("content") or {}).get("parts")) or []
+        texts = [str(part.get("text") or "").strip() for part in parts if isinstance(part, dict)]
+        merged = "\n".join([text for text in texts if text])
+        if merged:
+            logger.info("Gemini model %s succeeded (%d chars)", model, len(merged))
+            return merged
+        else:
+            logger.warning("Model %s returned empty text", model)
+            last_error = "empty text"
+            continue
+
+    logger.error("All Gemini models failed. Last error: %s", last_error)
+    return None
 
 
 async def generate_project_diagram(
@@ -227,20 +272,25 @@ async def generate_project_diagram(
     resolved_type = _infer_diagram_type(trimmed_prompt or (edit_instruction or ""), diagram_type)
 
     system_prompt_lines = [
-        "You help product and engineering teams turn ideas into Mermaid diagrams.",
+        "You are an expert software architect and diagram designer.",
+        "Turn the user's description into a detailed, real-world Mermaid diagram.",
         "Return STRICT JSON only. No markdown fences, no commentary.",
         "JSON shape:",
         "{",
-        '  "title": "string",',
+        '  "title": "string - descriptive title for the diagram",',
         '  "diagramType": "flowchart | sequenceDiagram | stateDiagram-v2 | gantt",',
-        '  "summary": "short explanation",',
-        '  "mermaid": "valid Mermaid code"',
+        '  "summary": "2-3 sentence explanation of what the diagram shows",',
+        '  "mermaid": "valid Mermaid code (no markdown fences, just raw mermaid syntax)"',
         "}",
         "",
         f"- Prefer {resolved_type} unless the user clearly needs a different supported type.",
-        "- Mermaid must be valid and concise.",
-        "- Keep labels short and readable.",
-        "- Use software, product, or workflow terminology from the supplied context.",
+        "- The Mermaid code MUST be valid and render correctly.",
+        "- Do NOT wrap the mermaid value in ```mermaid fences. Just raw mermaid syntax.",
+        "- Use REAL domain-specific nodes and labels, not generic placeholders.",
+        "- For example, if the user asks about YouTube, use nodes like 'User', 'CDN', 'Video Server', 'Recommendation Engine', etc.",
+        "- If the user asks about Netflix, use 'Client App', 'API Gateway', 'Content Delivery', 'Transcoding Service', etc.",
+        "- Make the diagram detailed with at least 6-10 nodes for a good data flow.",
+        "- Keep labels short but meaningful.",
         "- Do not wrap JSON in markdown fences.",
     ]
 
@@ -251,11 +301,11 @@ async def generate_project_diagram(
         context_chunks.append(f"External reference key: {file_key}")
     if current_mermaid:
         context_chunks.append(
-            "Existing Mermaid diagram that should be updated instead of recreated:\n"
+            "IMPORTANT: Here is the EXISTING Mermaid diagram that you must UPDATE (do not start from scratch):\n"
             f"```mermaid\n{current_mermaid}\n```"
         )
     if edit_instruction:
-        context_chunks.append(f"Update instruction:\n{_clean_text(edit_instruction)}")
+        context_chunks.append(f"Update instruction from the user:\n{_clean_text(edit_instruction)}")
 
     user_prompt = "\n\n".join(
         [
@@ -332,4 +382,3 @@ async def generate_project_diagram(
         figma_prompt=_build_figma_prompt(title, mermaid),
         sources=sources,
     )
-

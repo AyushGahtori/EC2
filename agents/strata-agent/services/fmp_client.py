@@ -37,6 +37,11 @@ async def fetch_income_statements(symbol: str | None, period: str | None = None)
             response = await client.get(FMP_BASE_URL, params=params)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 402:
+            raise ValueError(
+                "Financial API plan/billing restriction (HTTP 402). "
+                "Try a supported ticker for your plan or use a different symbol."
+            ) from exc
         if exc.response.status_code == 429:
             raise ValueError("Financial API rate limit reached. Please retry shortly.") from exc
         raise ValueError(f"Financial API returned HTTP {exc.response.status_code}.") from exc

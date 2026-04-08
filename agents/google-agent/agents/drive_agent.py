@@ -21,6 +21,10 @@ DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 CACHE_TTL_SECONDS = 15 * 60
 CACHE_MAX_ITEMS = 600
+DEFAULT_LIST_PAGE_SIZE = 10
+MAX_LIST_PAGE_SIZE = 50
+LISTING_SESSION_TTL_SECONDS = 15 * 60
+MAX_SESSION_SHOWN_IDS = 2500
 
 
 class DriveAgent(BaseAgent):
@@ -62,9 +66,9 @@ class DriveAgent(BaseAgent):
         action = self.normalize_action(action)
 
         if action == "list":
-            return await self.list_files()
+            return await self.list_files(user_message=user_message, context=context)
         if action == "list_pdf":
-            return await self.list_files(file_filter="pdf")
+            return await self.list_files(file_filter="pdf", user_message=user_message, context=context)
         if action == "list_folder":
             return await self.list_folder_contents(user_message, context)
         if action == "search":
@@ -73,7 +77,7 @@ class DriveAgent(BaseAgent):
             return await self.upload_file(user_message, context)
         if action == "read":
             return await self.read_file(user_message, context)
-        return await self.list_files()
+        return await self.list_files(user_message=user_message, context=context)
 
     async def _determine_action(
         self,
@@ -108,7 +112,27 @@ class DriveAgent(BaseAgent):
         parent_folder_id: Optional[str] = None,
         parent_folder_name: Optional[str] = None,
         page_size: int = 10,
+        user_message: str = "",
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        requested_limit = self._extract_requested_limit(user_message)
+        target_count = max(
+            1,
+            min(requested_limit or page_size or DEFAULT_LIST_PAGE_SIZE, MAX_LIST_PAGE_SIZE),
+        )
+
+        should_continue = self._should_continue_listing(user_message)
+        session_key = self._make_listing_session_key(
+            file_filter=file_filter,
+            parent_folder_id=parent_folder_id,
+            context=context,
+        )
+        session = self._load_listing_session(session_key) if should_continue else None
+        if not should_continue:
+            self._clear_listing_session(session_key)
+        page_token = str(session.get("next_page_token", "")) or None if session else None
+        shown_ids = set(session.get("shown_file_ids", [])) if session else set()
+
         query_parts = ["trashed = false"]
         if parent_folder_id:
             query_parts.append(f"'{parent_folder_id}' in parents")
@@ -116,25 +140,51 @@ class DriveAgent(BaseAgent):
             query_parts.append("mimeType = 'application/pdf'")
         query = " and ".join(query_parts)
 
-        try:
-            response = await self.request_google_api(
-                "GET",
-                f"{DRIVE_BASE_URL}/files",
-                params={
-                    "pageSize": page_size,
-                    "fields": "files(id,name,mimeType,modifiedTime,webViewLink,parents)",
-                    "orderBy": "modifiedTime desc",
-                    "q": query,
-                },
-                retry_on_failure=True,
-            )
-        except Exception as exc:
-            return self.handle_google_exception("Drive", exc)
+        files: List[Dict[str, Any]] = []
+        next_page_token = page_token
+        while len(files) < target_count:
+            try:
+                response = await self.request_google_api(
+                    "GET",
+                    f"{DRIVE_BASE_URL}/files",
+                    params={
+                        "pageSize": min(100, target_count + 15),
+                        "fields": "nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink,parents)",
+                        "orderBy": "modifiedTime desc",
+                        "q": query,
+                        "pageToken": next_page_token,
+                    },
+                    retry_on_failure=True,
+                )
+            except Exception as exc:
+                return self.handle_google_exception("Drive", exc)
 
-        if response.status_code != 200:
-            return self.handle_google_api_error("Drive", response)
+            if response.status_code != 200:
+                return self.handle_google_api_error("Drive", response)
 
-        files = response.json().get("files", [])
+            data = response.json()
+            batch = data.get("files", [])
+            next_page_token = data.get("nextPageToken")
+
+            for item in batch:
+                item_id = str(item.get("id", "")).strip()
+                if item_id and item_id in shown_ids:
+                    continue
+                files.append(item)
+                if item_id:
+                    shown_ids.add(item_id)
+                if len(files) >= target_count:
+                    break
+
+            if not next_page_token:
+                break
+
+        self._save_listing_session(
+            session_key=session_key,
+            next_page_token=next_page_token,
+            shown_file_ids=list(shown_ids),
+        )
+
         self._update_cache(files)
         if parent_folder_id:
             self._set_current_folder(parent_folder_id, parent_folder_name or "Selected folder")
@@ -142,17 +192,36 @@ class DriveAgent(BaseAgent):
             self._set_current_folder(None, None)
 
         if not files:
+            if should_continue:
+                return self.success(
+                    summary="No more files left in this batch. Ask for a fresh list to restart from the top.",
+                    data={
+                        "files": [],
+                        "hasMore": False,
+                        "returnedCount": 0,
+                        "totalShown": len(shown_ids),
+                    },
+                )
             if parent_folder_id:
                 return self.success(
                     summary=f"Folder '{parent_folder_name or 'selected folder'}' is empty.",
                     data={
                         "files": [],
+                        "hasMore": False,
+                        "returnedCount": 0,
+                        "totalShown": len(shown_ids),
                         "currentFolder": {"id": parent_folder_id, "name": parent_folder_name or "Selected folder"},
                     },
                 )
             if file_filter == "pdf":
-                return self.success(summary="I could not find any recent PDF files in your Drive.", data={"files": []})
-            return self.success(summary="Your Google Drive is empty.", data={"files": []})
+                return self.success(
+                    summary="I could not find any recent PDF files in your Drive.",
+                    data={"files": [], "hasMore": False, "returnedCount": 0, "totalShown": len(shown_ids)},
+                )
+            return self.success(
+                summary="Your Google Drive is empty.",
+                data={"files": [], "hasMore": False, "returnedCount": 0, "totalShown": len(shown_ids)},
+            )
 
         file_list = "\n".join(
             f"- {file_data['name']} ({file_data.get('mimeType', 'unknown')})"
@@ -165,7 +234,15 @@ class DriveAgent(BaseAgent):
         else:
             header = "Your Drive files:\n"
 
-        payload: Dict[str, Any] = {"files": files}
+        payload: Dict[str, Any] = {
+            "files": files,
+            "hasMore": bool(next_page_token),
+            "returnedCount": len(files),
+            "totalShown": len(shown_ids),
+            "excludedIdsCount": max(0, len(shown_ids) - len(files)),
+            "cursorId": session_key,
+            "nextCursor": session_key if next_page_token else None,
+        }
         if parent_folder_id:
             payload["currentFolder"] = {"id": parent_folder_id, "name": parent_folder_name or "Selected folder"}
         return self.success(summary=f"{header}{file_list}", data=payload)
@@ -186,6 +263,8 @@ class DriveAgent(BaseAgent):
                 parent_folder_id=current_folder_id,
                 parent_folder_name=cache.get("current_folder_name") or "Current folder",
                 page_size=25,
+                user_message=user_message,
+                context=context,
             )
 
         if not folder_query:
@@ -204,6 +283,8 @@ class DriveAgent(BaseAgent):
             parent_folder_id=str(folder_match["id"]),
             parent_folder_name=str(folder_match.get("name") or folder_query),
             page_size=25,
+            user_message=user_message,
+            context=context,
         )
 
     async def search_files(
@@ -668,6 +749,112 @@ class DriveAgent(BaseAgent):
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:")
         return cleaned
 
+    def _extract_requested_limit(self, user_message: str) -> Optional[int]:
+        text = (user_message or "").lower()
+        if not text:
+            return None
+
+        patterns = [
+            r"\b(?:last|latest|recent|show|list)\s+(\d{1,3})\b",
+            r"\b(\d{1,3})\s+(?:files?|documents?|items?)\b",
+            r"\bnext\s+(\d{1,3})\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return None
+
+    def _should_continue_listing(self, user_message: str) -> bool:
+        text = (user_message or "").lower()
+        if not text:
+            return False
+
+        continuation_markers = (
+            "next",
+            "more",
+            "another batch",
+            "continue",
+            "keep going",
+            "not in this batch",
+            "could not find",
+            "couldn't find",
+            "cant find",
+            "can't find",
+            "did not find",
+            "didn't find",
+            "show others",
+            "show more",
+        )
+        return any(marker in text for marker in continuation_markers)
+
+    def _make_listing_session_key(
+        self,
+        file_filter: Optional[str],
+        parent_folder_id: Optional[str],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        scope = (file_filter or "all").strip().lower() or "all"
+        parent_scope = (parent_folder_id or "root").strip() or "root"
+        chat_scope = "global"
+        if context and isinstance(context, dict):
+            chat_id = str(context.get("chatId", "")).strip()
+            if chat_id:
+                chat_scope = chat_id
+        return f"chat:{chat_scope}|scope:{scope}|parent:{parent_scope}"
+
+    def _load_listing_session(self, session_key: str) -> Dict[str, Any]:
+        cache = self._get_cache()
+        sessions = cache.setdefault("listing_sessions", {})
+        now = time.time()
+        raw = sessions.get(session_key)
+        if not isinstance(raw, dict):
+            return {}
+        expires_at = float(raw.get("expires_at", 0))
+        if expires_at <= now:
+            sessions.pop(session_key, None)
+            cache["updated_at"] = now
+            return {}
+        return raw
+
+    def _save_listing_session(
+        self,
+        session_key: str,
+        next_page_token: Optional[str],
+        shown_file_ids: List[str],
+    ) -> None:
+        cache = self._get_cache()
+        sessions = cache.setdefault("listing_sessions", {})
+        deduped_shown_ids: List[str] = []
+        seen: set[str] = set()
+        for item_id in shown_file_ids:
+            candidate = str(item_id or "").strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            deduped_shown_ids.append(candidate)
+        if len(deduped_shown_ids) > MAX_SESSION_SHOWN_IDS:
+            deduped_shown_ids = deduped_shown_ids[-MAX_SESSION_SHOWN_IDS:]
+
+        sessions[session_key] = {
+            "next_page_token": next_page_token or "",
+            "shown_file_ids": deduped_shown_ids,
+            "expires_at": time.time() + LISTING_SESSION_TTL_SECONDS,
+        }
+        cache["updated_at"] = time.time()
+
+    def _clear_listing_session(self, session_key: str) -> None:
+        cache = self._get_cache()
+        sessions = cache.setdefault("listing_sessions", {})
+        sessions.pop(session_key, None)
+        cache["updated_at"] = time.time()
+
     def _looks_like_folder_navigation(self, lowered_message: str) -> bool:
         if "folder" not in lowered_message:
             return False
@@ -696,6 +883,7 @@ class DriveAgent(BaseAgent):
             "last_listing": [],
             "current_folder_id": None,
             "current_folder_name": None,
+            "listing_sessions": {},
         }
 
     def _get_cache(self) -> Dict[str, Any]:
@@ -742,6 +930,7 @@ class DriveAgent(BaseAgent):
             cache["items_by_id"] = {}
             cache["name_to_items"] = {}
             cache["last_listing"] = []
+            cache["listing_sessions"] = {}
 
     def _find_cached_items(
         self,
@@ -972,3 +1161,6 @@ class DriveAgent(BaseAgent):
                 break
 
         return "\n\n".join(chunks).strip()
+
+
+

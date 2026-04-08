@@ -43,6 +43,9 @@ AGENT_DIRS=(
     "jira-agent"
     "linkedin-agent"
     "zoom-agent"
+    "dia-helper-agent"
+    "shopgenie-agent"
+    "career-switch-agent"
 )
 
 AUTH_SLUGS=(
@@ -174,6 +177,9 @@ check_health "greenhouse-agent" 8008
 check_health "jira-agent" 8009
 check_health "linkedin-agent" 8010
 check_health "zoom-agent" 8011
+check_health "dia-helper-agent" 8020 "/diahelper/health"
+check_health "shopgenie-agent" 8021 "/shopgenie/health"
+check_health "career-switch-agent" 8022 "/career-switch/health"
 
 info "Smoke testing public Nginx routes..."
 check_nginx "/health"
@@ -195,6 +201,9 @@ check_nginx "/greenhouse/health"
 check_nginx "/jira/health"
 check_nginx "/linkedin/health"
 check_nginx "/zoom/health"
+check_nginx "/diahelper/health"
+check_nginx "/shopgenie/health"
+check_nginx "/career-switch/health"
 
 info "Smoke testing public OAuth routes..."
 for slug in "${AUTH_SLUGS[@]}"; do
@@ -203,7 +212,7 @@ done
 
 info "================================================================"
 info "Deployment complete."
-info "All 18 agent services are configured and started."
+info "All 19 agent services are configured and started."
 info ""
 info "Next steps:"
 info "  1. Copy your serviceAccountKey.json to ${SECRETS_DIR}/serviceAccountKey.json"

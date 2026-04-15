@@ -1,102 +1,35 @@
-upstream teams_agent {
-    server 127.0.0.1:8100;
-    keepalive 16;
-}
-
-upstream todo_agent {
-    server 127.0.0.1:8200;
-    keepalive 16;
-}
-
-upstream google_agent {
-    server 127.0.0.1:8300;
-    keepalive 16;
-}
-
-upstream notion_agent {
-    server 127.0.0.1:8400;
-    keepalive 16;
-}
-
-upstream maps_agent {
-    server 127.0.0.1:8500;
-    keepalive 16;
-}
-
-upstream emergency_response_agent {
-    server 127.0.0.1:8510;
-    keepalive 16;
-}
-
-upstream strata_agent {
-    server 127.0.0.1:8012;
-    keepalive 16;
-}
-
-upstream canva_agent {
-    server 127.0.0.1:8001;
-    keepalive 16;
-}
-
-upstream dayplanner_agent {
-    server 127.0.0.1:8002;
-    keepalive 16;
-}
-
-upstream discord_agent {
-    server 127.0.0.1:8003;
-    keepalive 16;
-}
-
-upstream dropbox_agent {
-    server 127.0.0.1:8004;
-    keepalive 16;
-}
-
-upstream freshdesk_agent {
-    server 127.0.0.1:8005;
-    keepalive 16;
-}
-
-upstream github_agent {
-    server 127.0.0.1:8006;
-    keepalive 16;
-}
-
-upstream gitlab_agent {
-    server 127.0.0.1:8007;
-    keepalive 16;
-}
-
-upstream greenhouse_agent {
-    server 127.0.0.1:8008;
-    keepalive 16;
-}
-
-upstream jira_agent {
-    server 127.0.0.1:8009;
-    keepalive 16;
-}
-
-upstream linkedin_agent {
-    server 127.0.0.1:8010;
-    keepalive 16;
-}
-
-upstream zoom_agent {
-    server 127.0.0.1:8011;
-    keepalive 16;
-}
-
-upstream dia_helper_agent {
-    server 127.0.0.1:8020;
-    keepalive 16;
-}
+upstream teams_agent { server 127.0.0.1:8100; keepalive 16; }
+upstream todo_agent { server 127.0.0.1:8200; keepalive 16; }
+upstream google_agent { server 127.0.0.1:8300; keepalive 16; }
+upstream notion_agent { server 127.0.0.1:8400; keepalive 16; }
+upstream maps_agent { server 127.0.0.1:8500; keepalive 16; }
+upstream emergency_response_agent { server 127.0.0.1:8510; keepalive 16; }
+upstream strata_agent { server 127.0.0.1:8012; keepalive 16; }
+upstream canva_agent { server 127.0.0.1:8001; keepalive 16; }
+upstream dayplanner_agent { server 127.0.0.1:8002; keepalive 16; }
+upstream discord_agent { server 127.0.0.1:8003; keepalive 16; }
+upstream dropbox_agent { server 127.0.0.1:8004; keepalive 16; }
+upstream freshdesk_agent { server 127.0.0.1:8005; keepalive 16; }
+upstream github_agent { server 127.0.0.1:8006; keepalive 16; }
+upstream gitlab_agent { server 127.0.0.1:8007; keepalive 16; }
+upstream greenhouse_agent { server 127.0.0.1:8008; keepalive 16; }
+upstream jira_agent { server 127.0.0.1:8009; keepalive 16; }
+upstream linkedin_agent { server 127.0.0.1:8010; keepalive 16; }
+upstream zoom_agent { server 127.0.0.1:8011; keepalive 16; }
+upstream dia_helper_agent { server 127.0.0.1:8020; keepalive 16; }
+upstream shopgenie_agent { server 127.0.0.1:8021; keepalive 16; }
+upstream career_switch_agent { server 127.0.0.1:8022; keepalive 16; }
+upstream dashboard_designer_agent { server 127.0.0.1:8024; keepalive 16; }
+upstream smart_gtm_agent { server 127.0.0.1:8033; keepalive 16; }
+upstream seo_agent { server 127.0.0.1:8034; keepalive 16; }
+upstream startup_fundraising_agent { server 127.0.0.1:8035; keepalive 16; }
+upstream ats_agent { server 127.0.0.1:8036; keepalive 16; }
+upstream building_construction_agent { server 127.0.0.1:8037; keepalive 16; }
+upstream lms_agent { server 127.0.0.1:8039; keepalive 16; }
 
 server {
     listen 80;
-    server_name 13.206.83.175 _;
-
+    server_name 15.206.162.82 _;
     client_max_body_size 2m;
 
     location = /health {
@@ -172,34 +105,6 @@ server {
         proxy_read_timeout 60s;
     }
 
-    location /google/auth/ {
-        rewrite ^/google/(.*)$ /$1 break;
-        proxy_pass http://google_agent;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 5s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    location /notion/auth/ {
-        rewrite ^/notion/(.*)$ /$1 break;
-        proxy_pass http://notion_agent;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 5s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
     location /todo/ {
         proxy_pass http://todo_agent;
         proxy_http_version 1.1;
@@ -246,6 +151,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /google/auth/ {
+        rewrite ^/google/(.*)$ /$1 break;
+        proxy_pass http://google_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /notion/action {
         proxy_pass http://notion_agent/notion/action;
         proxy_http_version 1.1;
@@ -267,6 +186,20 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /notion/auth/ {
+        rewrite ^/notion/(.*)$ /$1 break;
+        proxy_pass http://notion_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
     }
 
     location = /maps/action {
@@ -718,6 +651,213 @@ server {
 
     location = /diahelper/health {
         proxy_pass http://dia_helper_agent/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /shopgenie/action {
+        proxy_pass http://shopgenie_agent/shopgenie/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /shopgenie/health {
+        proxy_pass http://shopgenie_agent/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /career-switch/action {
+        proxy_pass http://career_switch_agent/career-switch/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+
+    location = /career-switch/health {
+        proxy_pass http://career_switch_agent/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /dashboarddesigner/action {
+        proxy_pass http://dashboard_designer_agent/dashboarddesigner/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 120s;
+    }
+
+    location = /dashboarddesigner/health {
+        proxy_pass http://dashboard_designer_agent/dashboarddesigner/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /smartgtm/action {
+        proxy_pass http://smart_gtm_agent/smartgtm/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /smartgtm/health {
+        proxy_pass http://smart_gtm_agent/smartgtm/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /seo/action {
+        proxy_pass http://seo_agent/seo/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /seo/health {
+        proxy_pass http://seo_agent/seo/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /fundraising/action {
+        proxy_pass http://startup_fundraising_agent/fundraising/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /fundraising/health {
+        proxy_pass http://startup_fundraising_agent/fundraising/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /ats/action {
+        proxy_pass http://ats_agent/ats/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /ats/health {
+        proxy_pass http://ats_agent/ats/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /building/action {
+        proxy_pass http://building_construction_agent/building/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /building/health {
+        proxy_pass http://building_construction_agent/building/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /lms/action {
+        proxy_pass http://lms_agent/lms/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /lms/health {
+        proxy_pass http://lms_agent/lms/health;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

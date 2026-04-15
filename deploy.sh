@@ -22,7 +22,10 @@ NGINX_SRC="${APP_DIR}/nginx/sites-available/agents"
 NGINX_DST="/etc/nginx/sites-available/agents"
 NGINX_ENABLED="/etc/nginx/sites-enabled/agents"
 SECRETS_DIR="${APP_DIR}/.secrets"
-PUBLIC_BASE_URL="${AGENT_PUBLIC_BASE_URL:-http://13.206.83.175}"
+ENV_PUBLIC_BASE_URL="$(awk -F= '/^AGENT_PUBLIC_BASE_URL=/{print $2; exit}' /etc/environment 2>/dev/null || true)"
+ENV_PUBLIC_BASE_URL="${ENV_PUBLIC_BASE_URL%\"}"
+ENV_PUBLIC_BASE_URL="${ENV_PUBLIC_BASE_URL#\"}"
+PUBLIC_BASE_URL="${AGENT_PUBLIC_BASE_URL:-${ENV_PUBLIC_BASE_URL:-http://15.206.162.82}}"
 
 AGENT_DIRS=(
     "teams-agent"
@@ -43,6 +46,16 @@ AGENT_DIRS=(
     "jira-agent"
     "linkedin-agent"
     "zoom-agent"
+    "dia-helper-agent"
+    "shopgenie-agent"
+    "career-switch-agent"
+    "dashboard-designer-agent"
+    "smart-gtm-agent"
+    "seo-agent"
+    "startup-fundraising-agent"
+    "ats-agent"
+    "building-construction-agent"
+    "lms-agent"
 )
 
 AUTH_SLUGS=(
@@ -85,21 +98,40 @@ check_health() {
     local name="$1"
     local port="$2"
     local path="${3:-/health}"
+    local url="http://127.0.0.1:${port}${path}"
+    local attempts=20
+    local sleep_seconds=1
+    local i
 
-    if curl -sf --max-time 5 "http://127.0.0.1:${port}${path}" > /dev/null 2>&1; then
-        echo -e "  ${GREEN}OK${NC}  ${name} (127.0.0.1:${port}${path})"
-    else
-        echo -e "  ${RED}FAIL${NC} ${name} (127.0.0.1:${port}${path}) - check: journalctl -u ${name} -n 30"
-    fi
+    for ((i=1; i<=attempts; i++)); do
+        if curl -sf --max-time 5 "${url}" > /dev/null 2>&1; then
+            echo -e "  ${GREEN}OK${NC}  ${name} (127.0.0.1:${port}${path})"
+            return 0
+        fi
+        sleep "${sleep_seconds}"
+    done
+
+    echo -e "  ${RED}FAIL${NC} ${name} (127.0.0.1:${port}${path}) - check: journalctl -u ${name} -n 30"
+    return 1
 }
 
 check_nginx() {
     local route="$1"
-    if curl -sf --max-time 5 "${PUBLIC_BASE_URL}${route}" > /dev/null 2>&1; then
-        echo -e "  ${GREEN}OK${NC}  ${PUBLIC_BASE_URL}${route}"
-    else
-        echo -e "  ${YELLOW}WARN${NC} ${PUBLIC_BASE_URL}${route} - agent may need env vars configured"
-    fi
+    local url="${PUBLIC_BASE_URL}${route}"
+    local attempts=5
+    local sleep_seconds=1
+    local i
+
+    for ((i=1; i<=attempts; i++)); do
+        if curl -sf --max-time 5 "${url}" > /dev/null 2>&1; then
+            echo -e "  ${GREEN}OK${NC}  ${url}"
+            return 0
+        fi
+        sleep "${sleep_seconds}"
+    done
+
+    echo -e "  ${YELLOW}WARN${NC} ${url} - agent may need env vars configured"
+    return 1
 }
 
 check_auth_route() {
@@ -174,6 +206,16 @@ check_health "greenhouse-agent" 8008
 check_health "jira-agent" 8009
 check_health "linkedin-agent" 8010
 check_health "zoom-agent" 8011
+check_health "dia-helper-agent" 8020 "/health"
+check_health "shopgenie-agent" 8021 "/health"
+check_health "career-switch-agent" 8022 "/health"
+check_health "dashboard-designer-agent" 8024 "/health"
+check_health "smart-gtm-agent" 8033 "/health"
+check_health "seo-agent" 8034 "/health"
+check_health "startup-fundraising-agent" 8035 "/health"
+check_health "ats-agent" 8036 "/health"
+check_health "building-construction-agent" 8037 "/health"
+check_health "lms-agent" 8039 "/health"
 
 info "Smoke testing public Nginx routes..."
 check_nginx "/health"
@@ -195,6 +237,16 @@ check_nginx "/greenhouse/health"
 check_nginx "/jira/health"
 check_nginx "/linkedin/health"
 check_nginx "/zoom/health"
+check_nginx "/diahelper/health"
+check_nginx "/shopgenie/health"
+check_nginx "/career-switch/health"
+check_nginx "/dashboarddesigner/health"
+check_nginx "/smartgtm/health"
+check_nginx "/seo/health"
+check_nginx "/fundraising/health"
+check_nginx "/ats/health"
+check_nginx "/building/health"
+check_nginx "/lms/health"
 
 info "Smoke testing public OAuth routes..."
 for slug in "${AUTH_SLUGS[@]}"; do
@@ -203,11 +255,11 @@ done
 
 info "================================================================"
 info "Deployment complete."
-info "All 18 agent services are configured and started."
+info "All 28 agent services are configured and started."
 info ""
 info "Next steps:"
 info "  1. Copy your serviceAccountKey.json to ${SECRETS_DIR}/serviceAccountKey.json"
-info "  2. Fill in each agent .env with provider keys, AGENT_OAUTH_SHARED_SECRET, and AGENT_PUBLIC_BASE_URL"
+info "  2. Fill in each agent .env with provider keys, GEMINI_API_KEY, AGENT_OAUTH_SHARED_SECRET, and AGENT_PUBLIC_BASE_URL"
 info "  3. Ensure OAuth redirect URIs point to ${PUBLIC_BASE_URL}/<slug>/auth/callback"
 info "  4. Run 'sudo systemctl restart <agent-name>' after updating .env"
 info "================================================================"

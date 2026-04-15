@@ -5,7 +5,7 @@ from typing import Any
 
 from ec2_shared.firestore_store import get_provider_connection
 
-DEFAULT_PUBLIC_BASE_URL = "http://13.206.83.175"
+DEFAULT_PUBLIC_BASE_URL = "http://15.206.162.82"
 
 
 def get_public_base_url() -> str:

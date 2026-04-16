@@ -7,7 +7,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 from fastapi import FastAPI, HTTPException, Request
@@ -50,7 +50,17 @@ def _forwarded_origin(request: Request) -> str:
 
 
 def _callback_url(request: Request, agent_slug: str) -> str:
-    return f"{_forwarded_origin(request)}/{agent_slug}/auth/callback"
+    public_base = _get_env("AGENT_PUBLIC_BASE_URL")
+    base = public_base.rstrip("/") if public_base else _forwarded_origin(request)
+    return f"{base}/{agent_slug}/auth/callback"
+
+
+def _is_localhost_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").strip().lower()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 def _effective_redirect_uri(provider: str, request: Request, agent_slug: str) -> str:
@@ -69,6 +79,10 @@ def _effective_redirect_uri(provider: str, request: Request, agent_slug: str) ->
     }
     override = overrides.get(provider, "")
     if override:
+        # Safety valve: detached EC2 runtimes often keep AGENT_PUBLIC_BASE_URL set.
+        # If an old localhost redirect override is left behind, prefer the public callback.
+        if _is_localhost_url(override) and _get_env("AGENT_PUBLIC_BASE_URL"):
+            return _callback_url(request, agent_slug)
         return override
 
     return _callback_url(request, agent_slug)

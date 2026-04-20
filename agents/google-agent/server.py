@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parents[1]
@@ -62,7 +63,7 @@ app.add_middleware(
 class GoogleActionRequest(BaseModel):
     agent_type: str
     action: str
-    parameters: str | None = None
+    parameters: Any | None = None
     taskId: str | None = None
     userId: str | None = None
     agentId: str | None = None
@@ -112,7 +113,7 @@ def _normalize_gmail_action(action: str) -> str:
         return "reply"
     if raw in {"search", "search_emails"}:
         return "search"
-    if raw in {"read", "read_email"}:
+    if raw in {'read', 'read_email', 'summarize_email', 'summarise_email', 'email_summary', 'summarize_message'}:
         return "read"
     if raw in {"mark_read", "mark_as_read", "mark_email_as_read"}:
         return "mark_read"

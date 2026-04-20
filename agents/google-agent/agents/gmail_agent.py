@@ -4,8 +4,10 @@ Handles Gmail operations: send, draft, reply, summarize inbox
 """
 
 import base64
+import json
 import logging
 import re
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
@@ -16,10 +18,15 @@ logger = logging.getLogger(__name__)
 
 GMAIL_BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
 EMAIL_REGEX = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+DEFAULT_INBOX_LIST_COUNT = 10
+MAX_INBOX_LIST_COUNT = 20
+EMAIL_CACHE_TTL_SECONDS = 30 * 60
+EMAIL_CACHE_MAX_ITEMS = 200
 
 
 class GmailAgent(BaseAgent):
     """Agent for Gmail operations."""
+    _RAM_EMAIL_CACHE: Dict[str, Dict[str, Any]] = {}
 
     ACTION_ALIASES = {
         "send_email": "send",
@@ -36,6 +43,10 @@ class GmailAgent(BaseAgent):
         "reply_email": "reply",
         "search_emails": "search",
         "read_email": "read",
+        "summarize_email": "read",
+        "summarise_email": "read",
+        "email_summary": "read",
+        "summarize_message": "read",
         "mark_as_read": "mark_read",
         "mark_email_as_read": "mark_read",
     }
@@ -189,11 +200,17 @@ class GmailAgent(BaseAgent):
 
     async def summarize_inbox(self, user_message: str = "") -> Dict[str, Any]:
         """Fetch and summarize recent emails."""
+        requested_limit = self._extract_requested_limit(user_message)
+        target_count = max(
+            1,
+            min(requested_limit or DEFAULT_INBOX_LIST_COUNT, MAX_INBOX_LIST_COUNT),
+        )
+
         try:
             list_response = await self.request_google_api(
                 "GET",
                 f"{GMAIL_BASE_URL}/messages",
-                params={"maxResults": 10, "labelIds": "INBOX"},
+                params={"maxResults": target_count, "labelIds": "INBOX"},
                 retry_on_failure=True,
             )
         except Exception as exc:
@@ -205,7 +222,7 @@ class GmailAgent(BaseAgent):
         messages = list_response.json().get("messages", [])
         email_summaries = []
 
-        for msg in messages[:5]:
+        for msg in messages[:target_count]:
             try:
                 detail_response = await self.request_google_api(
                     "GET",
@@ -227,9 +244,11 @@ class GmailAgent(BaseAgent):
                 }
                 email_summaries.append(
                     {
+                        "id": msg["id"],
                         "from": headers.get("From", "Unknown"),
                         "subject": headers.get("Subject", "No Subject"),
                         "date": headers.get("Date", "Unknown"),
+                        "snippet": detail.get("snippet", ""),
                     }
                 )
 
@@ -238,9 +257,15 @@ class GmailAgent(BaseAgent):
             for email_item in email_summaries
         ) or "No recent emails found"
 
+        self._update_email_cache(email_summaries)
+
         return self.success(
             summary=f"Recent inbox ({len(email_summaries)} emails):\n{summary_text}",
-            data={"emails": email_summaries},
+            data={
+                "emails": email_summaries,
+                "returnedCount": len(email_summaries),
+                "requestedCount": target_count,
+            },
         )
 
     async def list_emails(self, user_message: str = "") -> Dict[str, Any]:
@@ -303,6 +328,7 @@ class GmailAgent(BaseAgent):
             f"- {item['subject']} — {item['from']}"
             for item in email_summaries
         )
+        self._update_email_cache(email_summaries)
         return self.success(
             summary=f"Found {len(email_summaries)} Gmail messages for '{query}':\n{summary_text}",
             data={"emails": email_summaries, "query": query},
@@ -327,7 +353,12 @@ class GmailAgent(BaseAgent):
         query = self._clean_text_value(str(params.get("query", "")))
 
         if not message_id:
-            message_match = await self._find_message_match(query=query or user_message)
+            cached_match = await self._find_cached_message_match(query=query or user_message, context=context)
+            if cached_match:
+                message_id = str(cached_match["id"])
+
+        if not message_id:
+            message_match = await self._find_message_match(query=query or user_message, context=context)
             if isinstance(message_match, dict) and message_match.get("status") == "error":
                 return message_match
             if not message_match:
@@ -367,6 +398,18 @@ class GmailAgent(BaseAgent):
             context=context,
         )
 
+        self._update_email_cache(
+            [
+                {
+                    "id": detail.get("id"),
+                    "from": headers.get("From", "Unknown"),
+                    "subject": headers.get("Subject", "No Subject"),
+                    "date": headers.get("Date", "Unknown"),
+                    "snippet": snippet,
+                }
+            ]
+        )
+
         return self.success(
             summary=summary,
             data={
@@ -400,7 +443,12 @@ class GmailAgent(BaseAgent):
         query = self._clean_text_value(str(params.get("query", "")))
 
         if not message_id:
-            message_match = await self._find_message_match(query=query or user_message)
+            cached_match = await self._find_cached_message_match(query=query or user_message, context=context)
+            if cached_match:
+                message_id = str(cached_match["id"])
+
+        if not message_id:
+            message_match = await self._find_message_match(query=query or user_message, context=context)
             if isinstance(message_match, dict) and message_match.get("status") == "error":
                 return message_match
             if not message_match:
@@ -432,11 +480,17 @@ class GmailAgent(BaseAgent):
         max_results: int = 10,
         query: str = "",
     ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"maxResults": max_results}
+        if query:
+            params["q"] = query
+        else:
+            params["labelIds"] = "INBOX"
+
         try:
             list_response = await self.request_google_api(
                 "GET",
                 f"{GMAIL_BASE_URL}/messages",
-                params={"maxResults": max_results, "q": query or None, "labelIds": "INBOX" if not query else None},
+                params=params,
                 retry_on_failure=True,
             )
         except Exception as exc:
@@ -465,29 +519,63 @@ class GmailAgent(BaseAgent):
                 }
             )
 
+        self._update_email_cache(email_summaries)
         return {"emails": email_summaries}
 
-    async def _find_message_match(self, query: str) -> Optional[Dict[str, Any]]:
-        result = await self._fetch_message_metadata_list(max_results=5, query=query)
+    async def _find_message_match(
+        self,
+        query: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        result = await self._fetch_message_metadata_list(max_results=10, query=query)
         if result.get("status") == "error":
             return result
 
         emails = result.get("emails", [])
-        return emails[0] if emails else None
+        if emails:
+            if len(emails) == 1:
+                self._set_last_selected_email(emails[0].get("id", ""))
+                return emails[0]
+
+            selected = await self._find_cached_message_match(query=query, context=context)
+            if selected:
+                return selected
+
+            self._set_last_selected_email(emails[0].get("id", ""))
+            return emails[0]
+
+        if query:
+            fallback = await self._fetch_message_metadata_list(max_results=10, query="")
+            if fallback.get("status") == "error":
+                return fallback
+
+            fallback_emails = fallback.get("emails", [])
+            if not fallback_emails:
+                return None
+
+            selected = await self._find_cached_message_match(query=query, context=context)
+            if selected:
+                return selected
+
+            self._set_last_selected_email(fallback_emails[0].get("id", ""))
+            return fallback_emails[0]
+
+        return None
 
     async def _get_message_details(
         self,
         message_id: str,
         format_type: str = "full",
     ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"format": format_type}
+        if format_type == "metadata":
+            params["metadataHeaders"] = ["From", "Subject", "Date", "To"]
+
         try:
             response = await self.request_google_api(
                 "GET",
                 f"{GMAIL_BASE_URL}/messages/{message_id}",
-                params={
-                    "format": format_type,
-                    "metadataHeaders": ["From", "Subject", "Date", "To"] if format_type == "metadata" else None,
-                },
+                params=params,
                 retry_on_failure=True,
             )
         except Exception as exc:
@@ -834,6 +922,186 @@ class GmailAgent(BaseAgent):
 
     def _clean_text_value(self, value: str) -> str:
         return value.strip().strip("\"'").strip()
+
+    def _extract_requested_limit(self, user_message: str) -> Optional[int]:
+        text = (user_message or "").lower()
+        if not text:
+            return None
+
+        patterns = [
+            r"\b(?:last|latest|recent|show|list)\s+(\d{1,3})\b",
+            r"\b(\d{1,3})\s+(?:emails?|mails?|messages?)\b",
+            r"\bnext\s+(\d{1,3})\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if not match:
+                continue
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+
+        return None
+
+    def _cache_key(self) -> str:
+        user_key = self._clean_text_value(str(self.user_id or "default_user")) or "default_user"
+        return user_key
+
+    def _empty_email_cache(self) -> Dict[str, Any]:
+        return {"updated_at": 0.0, "emails": [], "last_selected_id": ""}
+
+    def _get_email_cache(self) -> Dict[str, Any]:
+        cache_key = self._cache_key()
+        cache = self._RAM_EMAIL_CACHE.get(cache_key)
+        now = time.time()
+
+        if not isinstance(cache, dict):
+            cache = self._empty_email_cache()
+            self._RAM_EMAIL_CACHE[cache_key] = cache
+            return cache
+
+        updated_at = cache.get("updated_at", 0.0)
+        try:
+            updated_at = float(updated_at)
+        except (TypeError, ValueError):
+            updated_at = 0.0
+
+        if now - updated_at > EMAIL_CACHE_TTL_SECONDS:
+            cache = self._empty_email_cache()
+            self._RAM_EMAIL_CACHE[cache_key] = cache
+            return cache
+
+        if not isinstance(cache.get("emails"), list):
+            cache["emails"] = []
+        if not isinstance(cache.get("last_selected_id"), str):
+            cache["last_selected_id"] = ""
+
+        return cache
+
+    def _get_cached_listed_emails(self) -> List[Dict[str, Any]]:
+        cache = self._get_email_cache()
+        return list(cache.get("emails", []))
+
+    def _update_email_cache(self, emails: Optional[List[Dict[str, Any]]]) -> None:
+        if not emails:
+            return
+
+        cache = self._get_email_cache()
+        now = time.time()
+        normalized_new: List[Dict[str, Any]] = []
+
+        for item in emails:
+            if not isinstance(item, dict):
+                continue
+
+            message_id = self._clean_text_value(str(item.get("id", "")))
+            if not message_id:
+                continue
+
+            normalized_new.append(
+                {
+                    "id": message_id,
+                    "from": self._clean_text_value(str(item.get("from", "Unknown"))) or "Unknown",
+                    "subject": self._clean_text_value(str(item.get("subject", "No Subject"))) or "No Subject",
+                    "date": self._clean_text_value(str(item.get("date", "Unknown"))) or "Unknown",
+                    "snippet": self._clean_text_value(str(item.get("snippet", ""))),
+                    "isUnread": bool(item.get("isUnread", False)),
+                    "seenAt": now,
+                }
+            )
+
+        if not normalized_new:
+            return
+
+        merged: List[Dict[str, Any]] = []
+        seen_ids = set()
+        for candidate in normalized_new + cache.get("emails", []):
+            candidate_id = self._clean_text_value(str(candidate.get("id", "")))
+            if not candidate_id or candidate_id in seen_ids:
+                continue
+            seen_ids.add(candidate_id)
+            merged.append(candidate)
+            if len(merged) >= EMAIL_CACHE_MAX_ITEMS:
+                break
+
+        cache["emails"] = merged
+        cache["updated_at"] = now
+        if cache.get("last_selected_id") and cache["last_selected_id"] not in seen_ids:
+            cache["last_selected_id"] = ""
+        self._RAM_EMAIL_CACHE[self._cache_key()] = cache
+
+    def _set_last_selected_email(self, message_id: str) -> None:
+        clean_id = self._clean_text_value(str(message_id))
+        if not clean_id:
+            return
+        cache = self._get_email_cache()
+        cache["last_selected_id"] = clean_id
+        cache["updated_at"] = time.time()
+        self._RAM_EMAIL_CACHE[self._cache_key()] = cache
+
+    async def _find_cached_message_match(
+        self,
+        query: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        cache = self._get_email_cache()
+        emails = list(cache.get("emails", []))
+        if not emails:
+            return None
+
+        memory_rows = []
+        valid_ids: List[str] = []
+        for idx, email in enumerate(emails[:50], start=1):
+            message_id = self._clean_text_value(str(email.get("id", "")))
+            if not message_id:
+                continue
+            valid_ids.append(message_id)
+            memory_rows.append(
+                {
+                    "index": idx,
+                    "id": message_id,
+                    "from": email.get("from", "Unknown"),
+                    "subject": email.get("subject", "No Subject"),
+                    "date": email.get("date", "Unknown"),
+                    "snippet": str(email.get("snippet", ""))[:240],
+                }
+            )
+
+        if not memory_rows:
+            return None
+
+        selection_input = (
+            f"User request: {query}\n\n"
+            "Recent Gmail memory (newest first):\n"
+            f"{json.dumps(memory_rows, ensure_ascii=True)}\n\n"
+            f"Valid message ids:\n{json.dumps(valid_ids, ensure_ascii=True)}\n\n"
+            "Pick exactly one message_id from valid ids. "
+            "If no email matches, return null message_id."
+        )
+
+        selection = await self.extract_parameters(
+            user_message=selection_input,
+            schema_description="""
+- message_id: one value from the provided valid ids, or null if none matches
+- reason: short explanation
+            """,
+            example_output='{"message_id": null, "reason": "brief reason"}',
+            context=context,
+        )
+
+        selected_id = self._clean_text_value(str(selection.get("message_id", "")))
+        if not selected_id or selected_id not in set(valid_ids):
+            return None
+
+        for email in emails:
+            if str(email.get("id", "")) == selected_id:
+                self._set_last_selected_email(selected_id)
+                return email
+
+        return None
 
 
 

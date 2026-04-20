@@ -376,6 +376,11 @@ If the current message is continuing a pending request, merge it with the pendin
             raise GoogleAuthRequiredError()
 
         extra_headers = kwargs.pop("headers", {})
+        # Avoid sending blank query parameters (e.g. labelIds=None), which can trigger
+        # Google API validation errors such as "Invalid label:".
+        raw_params = kwargs.get("params")
+        if isinstance(raw_params, dict):
+            kwargs["params"] = {k: v for k, v in raw_params.items() if v is not None}
         max_attempts = 2 if retry_on_failure else 1
 
         for attempt in range(1, max_attempts + 1):

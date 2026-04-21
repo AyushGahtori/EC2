@@ -56,6 +56,7 @@ AGENT_DIRS=(
     "ats-agent"
     "building-construction-agent"
     "lms-agent"
+    "travel-halper-agent"
 )
 
 AUTH_SLUGS=(
@@ -219,6 +220,7 @@ check_health "startup-fundraising-agent" 8035 "/health"
 check_health "ats-agent" 8036 "/health"
 check_health "building-construction-agent" 8037 "/health"
 check_health "lms-agent" 8039 "/health"
+check_health "travel-halper-agent" 8040 "/health"
 
 info "Smoke testing public Nginx routes..."
 check_nginx "/health"
@@ -250,6 +252,7 @@ check_nginx "/fundraising/health"
 check_nginx "/ats/health"
 check_nginx "/building/health"
 check_nginx "/lms/health"
+check_nginx "/travelhalper/health"
 
 info "Smoke testing public OAuth routes..."
 for slug in "${AUTH_SLUGS[@]}"; do
@@ -258,7 +261,7 @@ done
 
 info "================================================================"
 info "Deployment complete."
-info "All 28 agent services are configured and started."
+info "All 29 agent services are configured and started."
 info ""
 info "Next steps:"
 info "  1. Copy your serviceAccountKey.json to ${SECRETS_DIR}/serviceAccountKey.json"

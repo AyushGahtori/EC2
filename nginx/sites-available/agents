@@ -26,6 +26,7 @@ upstream startup_fundraising_agent { server 127.0.0.1:8035; keepalive 16; }
 upstream ats_agent { server 127.0.0.1:8036; keepalive 16; }
 upstream building_construction_agent { server 127.0.0.1:8037; keepalive 16; }
 upstream lms_agent { server 127.0.0.1:8039; keepalive 16; }
+upstream travel_halper_agent { server 127.0.0.1:8040; keepalive 16; }
 
 server {
     listen 80 default_server;
@@ -858,6 +859,29 @@ server {
 
     location = /lms/health {
         proxy_pass http://lms_agent/lms/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /travelhalper/action {
+        proxy_pass http://travel_halper_agent/travelhalper/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /travelhalper/health {
+        proxy_pass http://travel_halper_agent/travelhalper/health;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

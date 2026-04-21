@@ -180,6 +180,9 @@ systemctl restart "${AGENT_DIRS[@]}"
 info "Installing Nginx reverse proxy configuration..."
 install -m 0644 "${NGINX_SRC}" "${NGINX_DST}"
 ln -sfn "${NGINX_DST}" "${NGINX_ENABLED}"
+if [[ -e /etc/nginx/sites-enabled/default ]]; then
+    rm -f /etc/nginx/sites-enabled/default
+fi
 
 nginx -t || die "Nginx config test failed - check ${NGINX_DST}"
 systemctl reload nginx

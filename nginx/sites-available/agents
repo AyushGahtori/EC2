@@ -28,8 +28,8 @@ upstream building_construction_agent { server 127.0.0.1:8037; keepalive 16; }
 upstream lms_agent { server 127.0.0.1:8039; keepalive 16; }
 
 server {
-    listen 80;
-    server_name 15.206.162.82 _;
+    listen 80 default_server;
+    server_name 35.154.54.246 _;
     client_max_body_size 2m;
 
     location = /health {

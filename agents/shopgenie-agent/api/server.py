@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from ec2_shared.api_security import apply_api_security
 
 from schemas import ShopGenieActionRequest, ShopGenieActionResponse
 from services.shopgenie_service import run_shopgenie
@@ -14,13 +14,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 @app.get("/health")

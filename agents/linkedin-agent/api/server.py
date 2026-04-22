@@ -14,7 +14,6 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -23,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
 from ec2_shared.firestore_store import get_db
+from ec2_shared.api_security import apply_api_security
 from firebase_admin import firestore
 
 load_dotenv()
@@ -30,12 +30,7 @@ logger = logging.getLogger(__name__)
 db = get_db()
 
 app = FastAPI(title="LinkedIn Agent API", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 LINKEDIN_API_V2 = "https://api.linkedin.com/v2"
 LINKEDIN_API_REST = "https://api.linkedin.com/rest"

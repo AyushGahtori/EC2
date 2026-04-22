@@ -1,113 +1,48 @@
-upstream teams_agent {
-    server 127.0.0.1:8100;
-    keepalive 16;
-}
+upstream teams_agent { server 127.0.0.1:8100; keepalive 16; }
+upstream todo_agent { server 127.0.0.1:8200; keepalive 16; }
+upstream google_agent { server 127.0.0.1:8300; keepalive 16; }
+upstream notion_agent { server 127.0.0.1:8400; keepalive 16; }
+upstream maps_agent { server 127.0.0.1:8500; keepalive 16; }
+upstream emergency_response_agent { server 127.0.0.1:8510; keepalive 16; }
+upstream strata_agent { server 127.0.0.1:8012; keepalive 16; }
+upstream canva_agent { server 127.0.0.1:8001; keepalive 16; }
+upstream dayplanner_agent { server 127.0.0.1:8002; keepalive 16; }
+upstream discord_agent { server 127.0.0.1:8003; keepalive 16; }
+upstream dropbox_agent { server 127.0.0.1:8004; keepalive 16; }
+upstream freshdesk_agent { server 127.0.0.1:8005; keepalive 16; }
+upstream github_agent { server 127.0.0.1:8006; keepalive 16; }
+upstream gitlab_agent { server 127.0.0.1:8007; keepalive 16; }
+upstream greenhouse_agent { server 127.0.0.1:8008; keepalive 16; }
+upstream jira_agent { server 127.0.0.1:8009; keepalive 16; }
+upstream linkedin_agent { server 127.0.0.1:8010; keepalive 16; }
+upstream zoom_agent { server 127.0.0.1:8011; keepalive 16; }
+upstream dia_helper_agent { server 127.0.0.1:8020; keepalive 16; }
+upstream shopgenie_agent { server 127.0.0.1:8021; keepalive 16; }
+upstream career_switch_agent { server 127.0.0.1:8022; keepalive 16; }
+upstream dashboard_designer_agent { server 127.0.0.1:8024; keepalive 16; }
+upstream smart_gtm_agent { server 127.0.0.1:8033; keepalive 16; }
+upstream seo_agent { server 127.0.0.1:8034; keepalive 16; }
+upstream startup_fundraising_agent { server 127.0.0.1:8035; keepalive 16; }
+upstream ats_agent { server 127.0.0.1:8036; keepalive 16; }
+upstream building_construction_agent { server 127.0.0.1:8037; keepalive 16; }
+upstream lms_agent { server 127.0.0.1:8039; keepalive 16; }
+upstream travel_halper_agent { server 127.0.0.1:8040; keepalive 16; }
+upstream devika_engineer_agent { server 127.0.0.1:8041; keepalive 16; }
 
-upstream todo_agent {
-    server 127.0.0.1:8200;
-    keepalive 16;
-}
-
-upstream google_agent {
-    server 127.0.0.1:8300;
-    keepalive 16;
-}
-
-upstream notion_agent {
-    server 127.0.0.1:8400;
-    keepalive 16;
-}
-
-upstream maps_agent {
-    server 127.0.0.1:8500;
-    keepalive 16;
-}
-
-upstream emergency_response_agent {
-    server 127.0.0.1:8510;
-    keepalive 16;
-}
-
-upstream strata_agent {
-    server 127.0.0.1:8012;
-    keepalive 16;
-}
-
-upstream canva_agent {
-    server 127.0.0.1:8001;
-    keepalive 16;
-}
-
-upstream dayplanner_agent {
-    server 127.0.0.1:8002;
-    keepalive 16;
-}
-
-upstream discord_agent {
-    server 127.0.0.1:8003;
-    keepalive 16;
-}
-
-upstream dropbox_agent {
-    server 127.0.0.1:8004;
-    keepalive 16;
-}
-
-upstream freshdesk_agent {
-    server 127.0.0.1:8005;
-    keepalive 16;
-}
-
-upstream github_agent {
-    server 127.0.0.1:8006;
-    keepalive 16;
-}
-
-upstream gitlab_agent {
-    server 127.0.0.1:8007;
-    keepalive 16;
-}
-
-upstream greenhouse_agent {
-    server 127.0.0.1:8008;
-    keepalive 16;
-}
-
-upstream jira_agent {
-    server 127.0.0.1:8009;
-    keepalive 16;
-}
-
-upstream linkedin_agent {
-    server 127.0.0.1:8010;
-    keepalive 16;
-}
-
-upstream zoom_agent {
-    server 127.0.0.1:8011;
-    keepalive 16;
-}
-
-upstream dia_helper_agent {
-    server 127.0.0.1:8020;
-    keepalive 16;
-}
-
-upstream shopgenie_agent {
-    server 127.0.0.1:8021;
-    keepalive 16;
-}
-
-upstream career_switch_agent {
-    server 127.0.0.1:8022;
-    keepalive 16;
-}
+# Throttle bursty auth attempts and accidental client floods.
+limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=20r/m;
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=150r/s;
 
 server {
     listen 80;
-    server_name 13.206.83.175 _;
-
+    server_name _;
     client_max_body_size 2m;
+    limit_req_status 429;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
 
     location = /health {
         proxy_pass http://teams_agent/health;
@@ -130,6 +65,7 @@ server {
     }
 
     location = /teams/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://teams_agent/teams/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -143,6 +79,7 @@ server {
     }
 
     location = /email/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://teams_agent/email/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -156,6 +93,7 @@ server {
     }
 
     location = /calendar/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://teams_agent/calendar/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -169,36 +107,9 @@ server {
     }
 
     location /teams/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/teams/(.*)$ /$1 break;
         proxy_pass http://teams_agent;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 5s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    location /google/auth/ {
-        rewrite ^/google/(.*)$ /$1 break;
-        proxy_pass http://google_agent;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 5s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    location /notion/auth/ {
-        rewrite ^/notion/(.*)$ /$1 break;
-        proxy_pass http://notion_agent;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
@@ -234,6 +145,7 @@ server {
     }
 
     location = /google/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://google_agent/google/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -256,7 +168,23 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /google/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
+        rewrite ^/google/(.*)$ /$1 break;
+        proxy_pass http://google_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /notion/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://notion_agent/notion/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -279,7 +207,23 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /notion/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
+        rewrite ^/notion/(.*)$ /$1 break;
+        proxy_pass http://notion_agent;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
     location = /maps/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://maps_agent/maps/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -303,6 +247,7 @@ server {
     }
 
     location = /emergency/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://emergency_response_agent/emergency/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -326,6 +271,7 @@ server {
     }
 
     location = /strata/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://strata_agent/strata/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -349,6 +295,7 @@ server {
     }
 
     location = /canva/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://canva_agent/canva/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -372,6 +319,7 @@ server {
     }
 
     location /canva/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/canva/(.*)$ /$1 break;
         proxy_pass http://canva_agent;
         proxy_http_version 1.1;
@@ -386,6 +334,7 @@ server {
     }
 
     location = /dayplanner/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://dayplanner_agent/dayplanner/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -409,6 +358,7 @@ server {
     }
 
     location = /discord/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://discord_agent/discord/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -432,6 +382,7 @@ server {
     }
 
     location /discord/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/discord/(.*)$ /$1 break;
         proxy_pass http://discord_agent;
         proxy_http_version 1.1;
@@ -446,6 +397,7 @@ server {
     }
 
     location = /dropbox/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://dropbox_agent/dropbox/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -469,6 +421,7 @@ server {
     }
 
     location /dropbox/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/dropbox/(.*)$ /$1 break;
         proxy_pass http://dropbox_agent;
         proxy_http_version 1.1;
@@ -483,6 +436,7 @@ server {
     }
 
     location = /freshdesk/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://freshdesk_agent/freshdesk/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -506,6 +460,7 @@ server {
     }
 
     location = /github/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://github_agent/github/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -529,6 +484,7 @@ server {
     }
 
     location /github/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/github/(.*)$ /$1 break;
         proxy_pass http://github_agent;
         proxy_http_version 1.1;
@@ -543,6 +499,7 @@ server {
     }
 
     location = /gitlab/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://gitlab_agent/gitlab/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -566,6 +523,7 @@ server {
     }
 
     location /gitlab/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/gitlab/(.*)$ /$1 break;
         proxy_pass http://gitlab_agent;
         proxy_http_version 1.1;
@@ -580,6 +538,7 @@ server {
     }
 
     location = /greenhouse/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://greenhouse_agent/greenhouse/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -603,6 +562,7 @@ server {
     }
 
     location = /jira/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://jira_agent/jira/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -626,6 +586,7 @@ server {
     }
 
     location /jira/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/jira/(.*)$ /$1 break;
         proxy_pass http://jira_agent;
         proxy_http_version 1.1;
@@ -640,6 +601,7 @@ server {
     }
 
     location = /linkedin/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://linkedin_agent/linkedin/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -663,6 +625,7 @@ server {
     }
 
     location /linkedin/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/linkedin/(.*)$ /$1 break;
         proxy_pass http://linkedin_agent;
         proxy_http_version 1.1;
@@ -677,6 +640,7 @@ server {
     }
 
     location = /zoom/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://zoom_agent/zoom/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -700,6 +664,7 @@ server {
     }
 
     location /zoom/auth/ {
+        limit_req zone=auth_limit burst=20 nodelay;
         rewrite ^/zoom/(.*)$ /$1 break;
         proxy_pass http://zoom_agent;
         proxy_http_version 1.1;
@@ -714,6 +679,7 @@ server {
     }
 
     location = /diahelper/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://dia_helper_agent/diahelper/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -737,6 +703,7 @@ server {
     }
 
     location = /shopgenie/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://shopgenie_agent/shopgenie/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -760,6 +727,7 @@ server {
     }
 
     location = /career-switch/action {
+        limit_req zone=api_limit burst=250 nodelay;
         proxy_pass http://career_switch_agent/career-switch/action;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -774,6 +742,222 @@ server {
 
     location = /career-switch/health {
         proxy_pass http://career_switch_agent/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /dashboarddesigner/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://dashboard_designer_agent/dashboarddesigner/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 120s;
+    }
+
+    location = /dashboarddesigner/health {
+        proxy_pass http://dashboard_designer_agent/dashboarddesigner/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /smartgtm/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://smart_gtm_agent/smartgtm/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /smartgtm/health {
+        proxy_pass http://smart_gtm_agent/smartgtm/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /seo/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://seo_agent/seo/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /seo/health {
+        proxy_pass http://seo_agent/seo/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /fundraising/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://startup_fundraising_agent/fundraising/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /fundraising/health {
+        proxy_pass http://startup_fundraising_agent/fundraising/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /ats/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://ats_agent/ats/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /ats/health {
+        proxy_pass http://ats_agent/ats/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /building/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://building_construction_agent/building/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /building/health {
+        proxy_pass http://building_construction_agent/building/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /lms/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://lms_agent/lms/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    location = /lms/health {
+        proxy_pass http://lms_agent/lms/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /travelhalper/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://travel_halper_agent/travelhalper/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /travelhalper/health {
+        proxy_pass http://travel_halper_agent/travelhalper/health;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /devika/action {
+        limit_req zone=api_limit burst=250 nodelay;
+        proxy_pass http://devika_engineer_agent/devika/action;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 90s;
+        proxy_read_timeout 90s;
+    }
+
+    location = /devika/health {
+        proxy_pass http://devika_engineer_agent/devika/health;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;

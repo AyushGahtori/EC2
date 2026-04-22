@@ -11,7 +11,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,6 +30,7 @@ from agents.tasks_agent import TasksAgent
 from agents.web_search_agent import WebSearchAgent
 from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
 from ec2_shared.oauth_router import OAuthAgentRegistration, register_oauth_routes
+from ec2_shared.api_security import apply_api_security
 from google_client import GOOGLE_SCOPES, GoogleAuthRequired
 
 logger = logging.getLogger(__name__)
@@ -50,13 +50,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 class GoogleActionRequest(BaseModel):

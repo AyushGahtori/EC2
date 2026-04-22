@@ -13,6 +13,12 @@ NC='\033[0m'
 info() { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn() { echo -e "${YELLOW}[warn]${NC}  $*"; }
 die() { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
+maybe_die() {
+    if [[ "${STRICT_ENV_VALIDATION}" == "1" ]]; then
+        die "$@"
+    fi
+    warn "$@"
+}
 
 [[ $EUID -eq 0 ]] || die "This script must be run as root (sudo ./deploy.sh)"
 
@@ -22,7 +28,15 @@ NGINX_SRC="${APP_DIR}/nginx/sites-available/agents"
 NGINX_DST="/etc/nginx/sites-available/agents"
 NGINX_ENABLED="/etc/nginx/sites-enabled/agents"
 SECRETS_DIR="${APP_DIR}/.secrets"
-PUBLIC_BASE_URL="${AGENT_PUBLIC_BASE_URL:-http://13.206.83.175}"
+ENV_PUBLIC_BASE_URL="$(awk -F= '/^AGENT_PUBLIC_BASE_URL=/{print $2; exit}' /etc/environment 2>/dev/null || true)"
+ENV_PUBLIC_BASE_URL="${ENV_PUBLIC_BASE_URL%\"}"
+ENV_PUBLIC_BASE_URL="${ENV_PUBLIC_BASE_URL#\"}"
+ENV_SHARED_SECRET="$(awk -F= '/^AGENT_OAUTH_SHARED_SECRET=/{print $2; exit}' /etc/environment 2>/dev/null || true)"
+ENV_SHARED_SECRET="${ENV_SHARED_SECRET%\"}"
+ENV_SHARED_SECRET="${ENV_SHARED_SECRET#\"}"
+PUBLIC_BASE_URL="${AGENT_PUBLIC_BASE_URL:-${ENV_PUBLIC_BASE_URL:-}}"
+SHARED_SECRET="${AGENT_OAUTH_SHARED_SECRET:-${ENV_SHARED_SECRET:-}}"
+STRICT_ENV_VALIDATION="${STRICT_ENV_VALIDATION:-1}"
 
 AGENT_DIRS=(
     "teams-agent"
@@ -46,6 +60,15 @@ AGENT_DIRS=(
     "dia-helper-agent"
     "shopgenie-agent"
     "career-switch-agent"
+    "dashboard-designer-agent"
+    "smart-gtm-agent"
+    "seo-agent"
+    "startup-fundraising-agent"
+    "ats-agent"
+    "building-construction-agent"
+    "lms-agent"
+    "travel-halper-agent"
+    "devika-engineer-agent"
 )
 
 AUTH_SLUGS=(
@@ -60,6 +83,20 @@ AUTH_SLUGS=(
     "jira"
     "linkedin"
     "zoom"
+)
+
+OAUTH_AGENT_DIRS=(
+    "teams-agent"
+    "google-agent"
+    "notion-agent"
+    "canva-agent"
+    "discord-agent"
+    "dropbox-agent"
+    "github-agent"
+    "gitlab-agent"
+    "jira-agent"
+    "linkedin-agent"
+    "zoom-agent"
 )
 
 require_dir() {
@@ -84,25 +121,62 @@ install_service() {
     install -m 0644 "${SYSTEMD_SRC_DIR}/${service_name}.service" "/etc/systemd/system/${service_name}.service"
 }
 
+read_env_value() {
+    local env_file="$1"
+    local key="$2"
+    awk -F= -v key="${key}" '$1 == key { print substr($0, index($0,$2)); exit }' "${env_file}" 2>/dev/null || true
+}
+
+ensure_env_value() {
+    local env_file="$1"
+    local key="$2"
+    local value
+    value="$(read_env_value "${env_file}" "${key}")"
+    if [[ -z "${value// }" ]]; then
+        maybe_die "Missing ${key} in ${env_file}"
+        return 1
+    fi
+    return 0
+}
+
 check_health() {
     local name="$1"
     local port="$2"
     local path="${3:-/health}"
+    local url="http://127.0.0.1:${port}${path}"
+    local attempts=20
+    local sleep_seconds=1
+    local i
 
-    if curl -sf --max-time 5 "http://127.0.0.1:${port}${path}" > /dev/null 2>&1; then
-        echo -e "  ${GREEN}OK${NC}  ${name} (127.0.0.1:${port}${path})"
-    else
-        echo -e "  ${RED}FAIL${NC} ${name} (127.0.0.1:${port}${path}) - check: journalctl -u ${name} -n 30"
-    fi
+    for ((i=1; i<=attempts; i++)); do
+        if curl -sf --max-time 5 "${url}" > /dev/null 2>&1; then
+            echo -e "  ${GREEN}OK${NC}  ${name} (127.0.0.1:${port}${path})"
+            return 0
+        fi
+        sleep "${sleep_seconds}"
+    done
+
+    echo -e "  ${RED}FAIL${NC} ${name} (127.0.0.1:${port}${path}) - check: journalctl -u ${name} -n 30"
+    return 1
 }
 
 check_nginx() {
     local route="$1"
-    if curl -sf --max-time 5 "${PUBLIC_BASE_URL}${route}" > /dev/null 2>&1; then
-        echo -e "  ${GREEN}OK${NC}  ${PUBLIC_BASE_URL}${route}"
-    else
-        echo -e "  ${YELLOW}WARN${NC} ${PUBLIC_BASE_URL}${route} - agent may need env vars configured"
-    fi
+    local url="${PUBLIC_BASE_URL}${route}"
+    local attempts=5
+    local sleep_seconds=1
+    local i
+
+    for ((i=1; i<=attempts; i++)); do
+        if curl -sf --max-time 5 "${url}" > /dev/null 2>&1; then
+            echo -e "  ${GREEN}OK${NC}  ${url}"
+            return 0
+        fi
+        sleep "${sleep_seconds}"
+    done
+
+    echo -e "  ${YELLOW}WARN${NC} ${url} - agent may need env vars configured"
+    return 1
 }
 
 check_auth_route() {
@@ -131,6 +205,29 @@ done
 info "Ensuring secrets directory..."
 mkdir -p "${SECRETS_DIR}"
 chmod 700 "${SECRETS_DIR}"
+
+if [[ -z "${PUBLIC_BASE_URL}" ]]; then
+    maybe_die "AGENT_PUBLIC_BASE_URL is required (env or /etc/environment)."
+fi
+
+if [[ -z "${SHARED_SECRET}" ]]; then
+    maybe_die "AGENT_OAUTH_SHARED_SECRET is required (env or /etc/environment)."
+fi
+
+if [[ -n "${PUBLIC_BASE_URL}" && "${PUBLIC_BASE_URL}" != https://* ]]; then
+    warn "AGENT_PUBLIC_BASE_URL is not HTTPS (${PUBLIC_BASE_URL}). Configure TLS before production traffic."
+fi
+
+for oauth_agent in "${OAUTH_AGENT_DIRS[@]}"; do
+    env_file="${APP_DIR}/agents/${oauth_agent}/.env"
+    if [[ ! -f "${env_file}" ]]; then
+        maybe_die "Missing ${env_file} for OAuth-capable agent ${oauth_agent}."
+        continue
+    fi
+
+    ensure_env_value "${env_file}" "AGENT_PUBLIC_BASE_URL" || true
+    ensure_env_value "${env_file}" "AGENT_OAUTH_SHARED_SECRET" || true
+done
 
 info "Installing Python dependencies for all agents..."
 for agent_name in "${AGENT_DIRS[@]}"; do
@@ -177,9 +274,18 @@ check_health "greenhouse-agent" 8008
 check_health "jira-agent" 8009
 check_health "linkedin-agent" 8010
 check_health "zoom-agent" 8011
-check_health "dia-helper-agent" 8020 "/diahelper/health"
-check_health "shopgenie-agent" 8021 "/shopgenie/health"
-check_health "career-switch-agent" 8022 "/career-switch/health"
+check_health "dia-helper-agent" 8020 "/health"
+check_health "shopgenie-agent" 8021 "/health"
+check_health "career-switch-agent" 8022 "/health"
+check_health "dashboard-designer-agent" 8024 "/health"
+check_health "smart-gtm-agent" 8033 "/health"
+check_health "seo-agent" 8034 "/health"
+check_health "startup-fundraising-agent" 8035 "/health"
+check_health "ats-agent" 8036 "/health"
+check_health "building-construction-agent" 8037 "/health"
+check_health "lms-agent" 8039 "/health"
+check_health "travel-halper-agent" 8040 "/health"
+check_health "devika-engineer-agent" 8041 "/health"
 
 info "Smoke testing public Nginx routes..."
 check_nginx "/health"
@@ -204,6 +310,15 @@ check_nginx "/zoom/health"
 check_nginx "/diahelper/health"
 check_nginx "/shopgenie/health"
 check_nginx "/career-switch/health"
+check_nginx "/dashboarddesigner/health"
+check_nginx "/smartgtm/health"
+check_nginx "/seo/health"
+check_nginx "/fundraising/health"
+check_nginx "/ats/health"
+check_nginx "/building/health"
+check_nginx "/lms/health"
+check_nginx "/travelhalper/health"
+check_nginx "/devika/health"
 
 info "Smoke testing public OAuth routes..."
 for slug in "${AUTH_SLUGS[@]}"; do
@@ -212,11 +327,12 @@ done
 
 info "================================================================"
 info "Deployment complete."
-info "All 19 agent services are configured and started."
+info "All 30 agent services are configured and started."
 info ""
 info "Next steps:"
 info "  1. Copy your serviceAccountKey.json to ${SECRETS_DIR}/serviceAccountKey.json"
-info "  2. Fill in each agent .env with provider keys, AGENT_OAUTH_SHARED_SECRET, and AGENT_PUBLIC_BASE_URL"
-info "  3. Ensure OAuth redirect URIs point to ${PUBLIC_BASE_URL}/<slug>/auth/callback"
-info "  4. Run 'sudo systemctl restart <agent-name>' after updating .env"
+info "  2. Fill in each agent .env with provider keys, GEMINI_API_KEY, AGENT_OAUTH_SHARED_SECRET, and AGENT_PUBLIC_BASE_URL"
+info "  3. Use an HTTPS domain for AGENT_PUBLIC_BASE_URL and terminate TLS at Nginx/ALB"
+info "  4. Ensure OAuth redirect URIs point to <AGENT_PUBLIC_BASE_URL>/<slug>/auth/callback"
+info "  5. Run 'sudo systemctl restart <agent-name>' after updating .env"
 info "================================================================"

@@ -31,11 +31,11 @@ async def fetch_job_listings(target_role: str) -> List[JobListing]:
     - LINKEDIN_PAGE
     - LINKEDIN_MAX_RESULTS
     """
-    api_key = _resolve_linkedin_api_key()
+    linkedin_token = _resolve_linkedin_api_key()
     api_host = _resolve_linkedin_api_host()
     api_base_url = _resolve_linkedin_api_base_url()
 
-    if not api_key:
+    if not linkedin_token:
         logger.warning("⚠️  LinkedIn API key not set. Returning empty job list.")
         return []
 
@@ -44,12 +44,12 @@ async def fetch_job_listings(target_role: str) -> List[JobListing]:
         return []
 
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {linkedin_token}",
         "Content-Type": "application/json",
     }
     if api_host:
         headers["X-RapidAPI-Host"] = api_host
-        headers["X-RapidAPI-Key"] = api_key
+        headers["X-RapidAPI-Key"] = linkedin_token
 
     params = {
         "query": target_role,

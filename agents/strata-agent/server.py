@@ -7,7 +7,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from ec2_shared.api_security import apply_api_security
 
 from schemas import StrataActionRequest, StrataActionResponse
 from services.ai_service import answer_query, generate_insight_block, summarize_attachments
@@ -24,13 +24,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 def _require_user(req: StrataActionRequest) -> str:

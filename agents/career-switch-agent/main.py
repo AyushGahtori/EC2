@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+from ec2_shared.api_security import apply_api_security
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -79,13 +79,7 @@ app = FastAPI(
 # ─────────────────────────────────────────────
 # CORS Middleware
 # ─────────────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],          # Tighten in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 # ─────────────────────────────────────────────

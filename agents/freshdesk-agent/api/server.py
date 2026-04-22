@@ -13,18 +13,13 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from ec2_shared.api_security import apply_api_security
 from pydantic import BaseModel, ConfigDict
 
 load_dotenv()
 
 app = FastAPI(title="Freshdesk Agent API", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 class AgentTaskRequest(BaseModel):

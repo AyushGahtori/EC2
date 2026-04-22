@@ -72,19 +72,10 @@ def _is_https_url(url: str) -> bool:
 
 
 def _google_bridge_redirect_uri(return_origin: str | None) -> str | None:
-    if not return_origin:
+    normalized = _normalize_origin(return_origin)
+    if not normalized:
         return None
-
-    try:
-        parsed = urlparse(return_origin.strip())
-    except ValueError:
-        return None
-
-    if not parsed.scheme or not parsed.netloc:
-        return None
-
-    origin = f"{parsed.scheme}://{parsed.netloc}"
-    return f"{origin}/api/google-auth/callback"
+    return f"{normalized}/api/google-auth/callback"
 
 
 def _effective_redirect_uri(
@@ -108,6 +99,15 @@ def _effective_redirect_uri(
     }
     override = overrides.get(provider, "")
     if override:
+        if (
+            provider == "google"
+            and not _is_https_url(override)
+            and not _is_localhost_url(override)
+            and not _env_bool("ALLOW_INSECURE_OAUTH_REDIRECTS", False)
+        ):
+            bridge_uri = _google_bridge_redirect_uri(return_origin)
+            if bridge_uri:
+                return bridge_uri
         return override
 
     callback_uri = _callback_url(request, agent_slug)
@@ -132,6 +132,73 @@ def _pkce_pair() -> tuple[str, str]:
 
 def _get_env(name: str, fallback: str = "") -> str:
     return os.getenv(name, fallback).strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = _get_env(name).lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _normalize_origin(value: str | None) -> str | None:
+    candidate = (value or "").strip().rstrip("/")
+    if not candidate:
+        return None
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _allowed_return_origins() -> set[str]:
+    origins: set[str] = set()
+
+    configured = _get_env("OAUTH_ALLOWED_RETURN_ORIGINS")
+    if configured:
+        for item in configured.split(","):
+            normalized = _normalize_origin(item)
+            if normalized:
+                origins.add(normalized)
+
+    for env_name in ("WEB_BASE_URL", "NEXT_PUBLIC_APP_URL", "AGENT_WEB_BASE_URL"):
+        normalized = _normalize_origin(_get_env(env_name))
+        if normalized:
+            origins.add(normalized)
+
+    vercel_url = _get_env("VERCEL_URL")
+    if vercel_url:
+        normalized = _normalize_origin(
+            vercel_url if vercel_url.startswith("http") else f"https://{vercel_url}"
+        )
+        if normalized:
+            origins.add(normalized)
+
+    if _env_bool("ALLOW_LOCALHOST_ORIGINS", True):
+        origins.update(
+            {
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+            }
+        )
+
+    return origins
+
+
+def _is_allowed_return_origin(origin: str | None) -> bool:
+    normalized = _normalize_origin(origin)
+    if not normalized:
+        return False
+    allowed = _allowed_return_origins()
+    if not allowed:
+        # Backward-compatible mode if no allowlist is configured yet.
+        return True
+    return normalized in allowed
 
 
 def _client_id(provider: str) -> str:
@@ -557,7 +624,7 @@ def _html_result(
     }
     color = "#16a34a" if success else "#ef4444"
     heading = "Connection complete" if success else "Connection failed"
-    target_origin = return_origin or "*"
+    target_origin = _normalize_origin(return_origin) if _is_allowed_return_origin(return_origin) else None
 
     return HTMLResponse(
         f"""<html><body style="background:#0a0a0a;color:#f5f5f5;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
@@ -569,8 +636,8 @@ def _html_result(
             <script>
                 (function () {{
                     try {{
-                        if (window.opener && !window.opener.closed) {{
-                            window.opener.postMessage({payload}, "{target_origin}");
+                        if (window.opener && !window.opener.closed && "{target_origin or ''}") {{
+                            window.opener.postMessage({payload}, "{target_origin or ''}");
                         }}
                     }} catch (_) {{}}
                     setTimeout(function () {{ window.close(); }}, 1200);
@@ -608,6 +675,9 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
         return_origin = payload.get("returnOrigin")
         if not isinstance(return_origin, str):
             return_origin = None
+        return_origin = _normalize_origin(return_origin)
+        if return_origin and not _is_allowed_return_origin(return_origin):
+            raise HTTPException(status_code=400, detail="Untrusted OAuth return origin.")
         redirect_uri = _effective_redirect_uri(
             provider,
             request,

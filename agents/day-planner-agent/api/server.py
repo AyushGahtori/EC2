@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 import firebase_admin
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from ec2_shared.api_security import apply_api_security
 from firebase_admin import credentials, firestore
 from pydantic import BaseModel, ConfigDict
 
@@ -30,12 +30,7 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 app = FastAPI(title="Day Planner Agent API", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 class AgentTaskRequest(BaseModel):

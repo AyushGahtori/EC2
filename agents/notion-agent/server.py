@@ -4,7 +4,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -16,6 +15,7 @@ load_dotenv(BASE_DIR / ".env")
 
 from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
 from ec2_shared.oauth_router import OAuthAgentRegistration, register_oauth_routes
+from ec2_shared.api_security import apply_api_security
 from notion_agent import NotionAgent, NotionAgentError
 
 app = FastAPI(
@@ -24,13 +24,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 class NotionActionRequest(BaseModel):

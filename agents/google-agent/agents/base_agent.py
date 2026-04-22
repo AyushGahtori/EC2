@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import httpx
 
@@ -19,6 +19,15 @@ class GoogleAuthRequiredError(Exception):
     pass
 
 logger = logging.getLogger(__name__)
+
+GEMINI_MODEL_MAP = {
+    "gemini-3-pro": os.getenv("GEMINI_MODEL_PRO", "gemini-2.5-pro"),
+    "gemini-3-flash": os.getenv("GEMINI_MODEL_FLASH", "gemini-2.5-flash"),
+    "gemini-3.1-flash-lite": os.getenv("GEMINI_MODEL_FLASH_LITE", "gemini-2.5-flash-lite"),
+    "gemini-3-flash-preview": os.getenv("GEMINI_MODEL_FLASH", "gemini-2.5-flash"),
+    "gemini-3.1-pro-preview": os.getenv("GEMINI_MODEL_PRO", "gemini-2.5-pro"),
+    "gemini-3.1-flash-lite-preview": os.getenv("GEMINI_MODEL_FLASH_LITE", "gemini-2.5-flash-lite"),
+}
 
 
 class BaseAgent(ABC):
@@ -66,6 +75,100 @@ class BaseAgent(ABC):
         if local_model:
             return local_model
         return "qwen2.5:7b"
+
+    def _resolve_gemini_model(self, context: Optional[Dict[str, Any]] = None) -> str:
+        """Resolve Gemini model with aliases and env defaults."""
+        context = context or {}
+        direct_model = context.get("model") or context.get("gemini_model")
+        if isinstance(direct_model, str) and direct_model.strip():
+            model_key = direct_model.strip()
+            return GEMINI_MODEL_MAP.get(model_key, model_key)
+
+        fallback = os.getenv("GEMINI_MODEL", "").strip()
+        if fallback:
+            return GEMINI_MODEL_MAP.get(fallback, fallback)
+
+        return GEMINI_MODEL_MAP.get("gemini-3-flash", "gemini-2.5-flash")
+
+    def _should_use_gemini(self, context: Optional[Dict[str, Any]] = None) -> bool:
+        """Decide whether Gemini should be used for LLM calls."""
+        context = context or {}
+        if not os.getenv("GEMINI_API_KEY", "").strip():
+            return False
+
+        provider_hint = (
+            str(context.get("llm_provider", "")).strip().lower()
+            or os.getenv("AGENT_LLM_PROVIDER", "").strip().lower()
+        )
+        if provider_hint == "gemini":
+            return True
+        if provider_hint == "ollama":
+            return False
+
+        model_hint = str(context.get("model", "")).strip().lower()
+        if model_hint.startswith("gemini"):
+            return True
+
+        default_model = os.getenv("GEMINI_MODEL", "").strip().lower()
+        if default_model.startswith("gemini"):
+            return True
+
+        return False
+
+    async def _call_gemini(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: str = "",
+        force_json: bool = False,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Call Gemini generateContent endpoint and return plain text."""
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not configured")
+
+        gemini_model = self._resolve_gemini_model(context)
+        contents = []
+
+        for msg in messages:
+            role = "model" if msg.get("role") in {"assistant", "model"} else "user"
+            text = (msg.get("content") or "").strip()
+            if not text:
+                continue
+            contents.append({"role": role, "parts": [{"text": text}]})
+
+        if not contents:
+            contents.append({"role": "user", "parts": [{"text": "Hello"}]})
+
+        payload: Dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {"temperature": 0.2},
+        }
+
+        if system_prompt.strip():
+            payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
+
+        if force_json:
+            payload["generationConfig"]["response_mime_type"] = "application/json"
+
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{gemini_model}:generateContent?key={api_key}"
+        )
+
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        candidates = data.get("candidates") or []
+        if not candidates:
+            return ""
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        return "".join(
+            part.get("text", "") for part in parts if isinstance(part.get("text"), str)
+        ).strip()
 
     @abstractmethod
     async def handle(self, user_message: str, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -128,40 +231,66 @@ If the current message is continuing a pending request, merge it with the pendin
 
         prompt = "\n\n".join(prompt_sections)
 
-        # Call local Ollama directly for json extraction
-        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
-        ollama_model = self._resolve_ollama_model(context)
-        
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                res = await client.post(
-                    f"{ollama_url}/api/chat",
-                    json={
-                        "model": ollama_model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "format": "json"
-                    }
+            content = ""
+            if self._should_use_gemini(context):
+                content = await self._call_gemini(
+                    [{"role": "user", "content": prompt}],
+                    force_json=True,
+                    context=context,
                 )
-                if res.status_code == 200:
-                    content = res.json().get("message", {}).get("content", "{}")
-                    return json.loads(content)
+            else:
+                ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+                ollama_model = self._resolve_ollama_model(context)
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    res = await client.post(
+                        f"{ollama_url}/api/chat",
+                        json={
+                            "model": ollama_model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "stream": False,
+                            "format": "json"
+                        }
+                    )
+                    if res.status_code == 200:
+                        content = res.json().get("message", {}).get("content", "{}")
+
+            if not content:
+                return {}
+
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                start = content.find("{")
+                end = content.rfind("}")
+                if start >= 0 and end > start:
+                    return json.loads(content[start : end + 1])
         except Exception as e:
             logger.error(f"Failed to parse LLM json: {e}")
-        
+
         return {}
 
     async def llm_complete(self, messages: list, system_prompt: str = "", context: Optional[Dict[str, Any]] = None) -> str:
-        """Call local Ollama to generate a plain text response."""
-        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
-        ollama_model = self._resolve_ollama_model(context)
-
+        """Generate plain text using Gemini (preferred) or Ollama fallback."""
         formatted_messages = []
         if system_prompt:
             formatted_messages.append({"role": "system", "content": system_prompt})
         formatted_messages.extend(messages)
 
         try:
+            if self._should_use_gemini(context):
+                gemini_messages = [
+                    msg for msg in formatted_messages if msg.get("role") != "system"
+                ]
+                gemini_system_prompt = system_prompt or ""
+                return await self._call_gemini(
+                    gemini_messages,
+                    system_prompt=gemini_system_prompt,
+                    context=context,
+                )
+
+            ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+            ollama_model = self._resolve_ollama_model(context)
             async with httpx.AsyncClient(timeout=60.0) as client:
                 res = await client.post(
                     f"{ollama_url}/api/chat",
@@ -175,7 +304,7 @@ If the current message is continuing a pending request, merge it with the pendin
                     return res.json().get("message", {}).get("content", "")
         except Exception as e:
             logger.error(f"Failed to generate LLM text completion: {e}")
-        
+
         return "I could not summarize the results due to an internal error."
 
     def success(self, summary: str, data: Any = None) -> Dict[str, Any]:

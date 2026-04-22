@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+from ec2_shared.api_security import apply_api_security
 from pydantic import BaseModel
 
 try:
@@ -56,12 +56,7 @@ app = FastAPI(
     version="3.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 class AgentTaskRequest(BaseModel):

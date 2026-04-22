@@ -21,14 +21,43 @@ EMAIL_REGEX = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE
 class GmailAgent(BaseAgent):
     """Agent for Gmail operations."""
 
+    ACTION_ALIASES = {
+        "send_email": "send",
+        "compose": "send",
+        "compose_email": "send",
+        "mail": "send",
+        "email": "send",
+        "create_draft": "draft",
+        "draft_email": "draft",
+        "summarize_inbox": "summarize",
+        "inbox_summary": "summarize",
+        "list_emails": "list",
+        "inbox": "list",
+        "reply_email": "reply",
+        "search_emails": "search",
+        "read_email": "read",
+        "mark_as_read": "mark_read",
+        "mark_email_as_read": "mark_read",
+    }
+
+    @classmethod
+    def normalize_action(cls, action: str) -> str:
+        cleaned = (action or "").strip().lower()
+        return cls.ACTION_ALIASES.get(cleaned, cleaned)
+
     async def handle(self, user_message: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Determine action and execute Gmail operation."""
         pending_task = self._get_pending_task(context)
-        if pending_task and self._looks_like_follow_up_message(user_message, pending_task):
+        forced_action = self.normalize_action(str((context or {}).get("forced_action", "")))
+
+        if forced_action:
+            action = forced_action
+        elif pending_task and self._looks_like_follow_up_message(user_message, pending_task):
             action = pending_task.get("action", "send")
         else:
             action = await self._determine_action(user_message, context)
 
+        action = self.normalize_action(action)
         logger.info(f"[gmail] action: {action}")
 
         if action == "send":
@@ -54,13 +83,17 @@ class GmailAgent(BaseAgent):
         user_message: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> str:
+        direct_hint = self.normalize_action((user_message or "").strip().split(" ", 1)[0])
+        if direct_hint in {"send", "draft", "summarize", "reply", "list", "search", "read", "mark_read"}:
+            return direct_hint
+
         params = await self.extract_parameters(
             user_message=user_message,
             schema_description='action: one of "send", "draft", "summarize", "reply", "list", "search", "read", "mark_read"',
             example_output='{"action": "send"}',
             context=context,
         )
-        return params.get("action", "list")
+        return self.normalize_action(params.get("action", "list"))
 
     async def send_email(
         self,

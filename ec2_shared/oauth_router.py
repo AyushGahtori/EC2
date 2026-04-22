@@ -7,7 +7,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import requests
 from fastapi import FastAPI, HTTPException, Request
@@ -50,7 +50,77 @@ def _forwarded_origin(request: Request) -> str:
 
 
 def _callback_url(request: Request, agent_slug: str) -> str:
-    return f"{_forwarded_origin(request)}/{agent_slug}/auth/callback"
+    public_base = _get_env("AGENT_PUBLIC_BASE_URL")
+    base = public_base.rstrip("/") if public_base else _forwarded_origin(request)
+    return f"{base}/{agent_slug}/auth/callback"
+
+
+def _is_localhost_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").strip().lower()
+    except ValueError:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _is_https_url(url: str) -> bool:
+    try:
+        scheme = (urlparse(url).scheme or "").strip().lower()
+    except ValueError:
+        return False
+    return scheme == "https"
+
+
+def _google_bridge_redirect_uri(return_origin: str | None) -> str | None:
+    normalized = _normalize_origin(return_origin)
+    if not normalized:
+        return None
+    return f"{normalized}/api/google-auth/callback"
+
+
+def _effective_redirect_uri(
+    provider: str,
+    request: Request,
+    agent_slug: str,
+    return_origin: str | None = None,
+) -> str:
+    overrides = {
+        "google": _get_env("GOOGLE_REDIRECT_URI"),
+        "microsoft": _get_env("MICROSOFT_REDIRECT_URI"),
+        "notion": _get_env("NOTION_REDIRECT_URI"),
+        "github": _get_env("GITHUB_REDIRECT_URI"),
+        "gitlab": _get_env("GITLAB_REDIRECT_URI"),
+        "discord": _get_env("DISCORD_REDIRECT_URI"),
+        "dropbox": _get_env("DROPBOX_REDIRECT_URI"),
+        "atlassian": _get_env("JIRA_REDIRECT_URI"),
+        "linkedin": _get_env("LINKEDIN_REDIRECT_URI"),
+        "zoom": _get_env("ZOOM_REDIRECT_URI"),
+        "canva": _get_env("CANVA_REDIRECT_URI"),
+    }
+    override = overrides.get(provider, "")
+    if override:
+        if (
+            provider == "google"
+            and not _is_https_url(override)
+            and not _is_localhost_url(override)
+            and not _env_bool("ALLOW_INSECURE_OAUTH_REDIRECTS", False)
+        ):
+            bridge_uri = _google_bridge_redirect_uri(return_origin)
+            if bridge_uri:
+                return bridge_uri
+        return override
+
+    callback_uri = _callback_url(request, agent_slug)
+
+    # Google does not allow non-localhost HTTP redirect URIs.
+    # When EC2 is exposed over plain HTTP (e.g., public IP without TLS),
+    # use the web-app callback bridge instead.
+    if provider == "google" and not _is_https_url(callback_uri) and not _is_localhost_url(callback_uri):
+        bridge_uri = _google_bridge_redirect_uri(return_origin)
+        if bridge_uri:
+            return bridge_uri
+
+    return callback_uri
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -62,6 +132,73 @@ def _pkce_pair() -> tuple[str, str]:
 
 def _get_env(name: str, fallback: str = "") -> str:
     return os.getenv(name, fallback).strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = _get_env(name).lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _normalize_origin(value: str | None) -> str | None:
+    candidate = (value or "").strip().rstrip("/")
+    if not candidate:
+        return None
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _allowed_return_origins() -> set[str]:
+    origins: set[str] = set()
+
+    configured = _get_env("OAUTH_ALLOWED_RETURN_ORIGINS")
+    if configured:
+        for item in configured.split(","):
+            normalized = _normalize_origin(item)
+            if normalized:
+                origins.add(normalized)
+
+    for env_name in ("WEB_BASE_URL", "NEXT_PUBLIC_APP_URL", "AGENT_WEB_BASE_URL"):
+        normalized = _normalize_origin(_get_env(env_name))
+        if normalized:
+            origins.add(normalized)
+
+    vercel_url = _get_env("VERCEL_URL")
+    if vercel_url:
+        normalized = _normalize_origin(
+            vercel_url if vercel_url.startswith("http") else f"https://{vercel_url}"
+        )
+        if normalized:
+            origins.add(normalized)
+
+    if _env_bool("ALLOW_LOCALHOST_ORIGINS", True):
+        origins.update(
+            {
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+            }
+        )
+
+    return origins
+
+
+def _is_allowed_return_origin(origin: str | None) -> bool:
+    normalized = _normalize_origin(origin)
+    if not normalized:
+        return False
+    allowed = _allowed_return_origins()
+    if not allowed:
+        # Backward-compatible mode if no allowlist is configured yet.
+        return True
+    return normalized in allowed
 
 
 def _client_id(provider: str) -> str:
@@ -105,9 +242,10 @@ def _build_auth_url(
     agent_slug: str,
     scopes: list[str],
     state_id: str,
+    redirect_uri: str | None = None,
     pkce_challenge: str | None = None,
 ) -> str:
-    redirect_uri = _callback_url(request, agent_slug)
+    redirect_uri = (redirect_uri or _effective_redirect_uri(provider, request, agent_slug)).strip()
     client_id = _client_id(provider)
     if not client_id:
         raise HTTPException(status_code=500, detail=f"OAuth client ID is missing for {provider}.")
@@ -244,9 +382,10 @@ def _exchange_code(
     request: Request,
     agent_slug: str,
     scopes: list[str],
+    redirect_uri: str | None = None,
     pkce_verifier: str | None = None,
 ) -> dict[str, Any]:
-    redirect_uri = _callback_url(request, agent_slug)
+    redirect_uri = (redirect_uri or _effective_redirect_uri(provider, request, agent_slug)).strip()
     client_id = _client_id(provider)
     client_secret = _client_secret(provider)
 
@@ -474,8 +613,10 @@ def _html_result(
     agent_id: str | None = None,
     provider: str | None = None,
 ) -> HTMLResponse:
+    snitchx_type = "snitchx_oauth_success" if success else "snitchx_oauth_error"
     payload = {
-        "type": "snitchx_oauth_success" if success else "snitchx_oauth_error",
+        "type": "Pian_oauth_success" if success else "Pian_oauth_error",
+        "snitchxType": snitchx_type,
         "bundleId": bundle_id,
         "agentId": agent_id,
         "provider": provider,
@@ -483,7 +624,7 @@ def _html_result(
     }
     color = "#16a34a" if success else "#ef4444"
     heading = "Connection complete" if success else "Connection failed"
-    target_origin = return_origin or "*"
+    target_origin = _normalize_origin(return_origin) if _is_allowed_return_origin(return_origin) else None
 
     return HTMLResponse(
         f"""<html><body style="background:#0a0a0a;color:#f5f5f5;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
@@ -495,8 +636,8 @@ def _html_result(
             <script>
                 (function () {{
                     try {{
-                        if (window.opener && !window.opener.closed) {{
-                            window.opener.postMessage({payload}, "{target_origin}");
+                        if (window.opener && !window.opener.closed && "{target_origin or ''}") {{
+                            window.opener.postMessage({payload}, "{target_origin or ''}");
                         }}
                     }} catch (_) {{}}
                     setTimeout(function () {{ window.close(); }}, 1200);
@@ -531,6 +672,19 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
         if not isinstance(scopes, list):
             scopes = list(registration.default_scopes)
 
+        return_origin = payload.get("returnOrigin")
+        if not isinstance(return_origin, str):
+            return_origin = None
+        return_origin = _normalize_origin(return_origin)
+        if return_origin and not _is_allowed_return_origin(return_origin):
+            raise HTTPException(status_code=400, detail="Untrusted OAuth return origin.")
+        redirect_uri = _effective_redirect_uri(
+            provider,
+            request,
+            agent_slug,
+            return_origin=return_origin,
+        )
+
         pkce_verifier = None
         pkce_challenge = None
         if provider in {"canva", "microsoft"}:
@@ -541,6 +695,7 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
                 **payload,
                 "provider": provider,
                 "agentSlug": agent_slug,
+                "redirectUri": redirect_uri,
                 "pkceVerifier": pkce_verifier,
             }
         )
@@ -550,6 +705,7 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
             agent_slug=agent_slug,
             scopes=scopes,
             state_id=state_id,
+            redirect_uri=redirect_uri,
             pkce_challenge=pkce_challenge,
         )
         return RedirectResponse(auth_url, status_code=302)
@@ -591,6 +747,15 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
             scopes = state_payload.get("scopes")
             if not isinstance(scopes, list):
                 scopes = list(registration.default_scopes)
+            state_return_origin = state_payload.get("returnOrigin")
+            redirect_uri = state_payload.get("redirectUri")
+            if not isinstance(redirect_uri, str) or not redirect_uri.strip():
+                redirect_uri = _effective_redirect_uri(
+                    provider,
+                    request,
+                    agent_slug,
+                    return_origin=state_return_origin if isinstance(state_return_origin, str) else None,
+                )
 
             token_data = _exchange_code(
                 provider=provider,
@@ -598,6 +763,7 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
                 request=request,
                 agent_slug=agent_slug,
                 scopes=scopes,
+                redirect_uri=redirect_uri,
                 pkce_verifier=state_payload.get("pkceVerifier"),
             )
             metadata = _provider_metadata(provider, token_data)

@@ -24,12 +24,12 @@ if load_dotenv:
     load_dotenv(BASE_DIR / ".env")
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from calendar_agent import run_calendar_action
 from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
 from ec2_shared.oauth_router import OAuthAgentRegistration, register_oauth_routes
+from ec2_shared.api_security import apply_api_security
 from email_agent import run_email_action
 from graph_client import GRAPH_SCOPES
 from teams_agent import run_teams_action
@@ -68,13 +68,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 class TeamsActionRequest(BaseModel):

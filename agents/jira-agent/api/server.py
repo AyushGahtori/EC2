@@ -14,7 +14,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -22,16 +21,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
+from ec2_shared.api_security import apply_api_security
 
 load_dotenv()
 
 app = FastAPI(title="Jira Agent API", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+apply_api_security(app)
 
 
 class AgentTaskRequest(BaseModel):

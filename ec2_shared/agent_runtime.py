@@ -5,15 +5,17 @@ from typing import Any
 
 from ec2_shared.firestore_store import get_provider_connection
 
-DEFAULT_PUBLIC_BASE_URL = "http://13.206.83.175"
-
 
 def get_public_base_url() -> str:
-    return (os.getenv("AGENT_PUBLIC_BASE_URL", "") or DEFAULT_PUBLIC_BASE_URL).rstrip("/")
+    return os.getenv("AGENT_PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 
 def build_agent_auth_url(agent_slug: str) -> str:
-    return f"{get_public_base_url()}/{agent_slug}/auth/login"
+    base_url = get_public_base_url()
+    if not base_url:
+        # Safe fallback: caller can resolve this relative URL against its runtime base.
+        return f"/{agent_slug}/auth/login"
+    return f"{base_url}/{agent_slug}/auth/login"
 
 
 def auth_required_response(

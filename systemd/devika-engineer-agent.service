@@ -8,8 +8,9 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/app/agents/devika-engineer-agent
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/ubuntu/app
 EnvironmentFile=-/home/ubuntu/app/agents/devika-engineer-agent/.env
-ExecStart=/home/ubuntu/app/agents/devika-engineer-agent/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8041 --workers 2
+ExecStart=/home/ubuntu/app/agents/devika-engineer-agent/venv/bin/uvicorn server:app --host 0.0.0.0 --port 8041 --workers 1
 Restart=always
 RestartSec=5
 LimitNOFILE=65535

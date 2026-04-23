@@ -190,15 +190,31 @@ def _allowed_return_origins() -> set[str]:
     return origins
 
 
+def _has_explicit_return_origin_policy() -> bool:
+    if _get_env("OAUTH_ALLOWED_RETURN_ORIGINS"):
+        return True
+
+    for env_name in ("WEB_BASE_URL", "NEXT_PUBLIC_APP_URL", "AGENT_WEB_BASE_URL", "VERCEL_URL"):
+        if _normalize_origin(_get_env(env_name)):
+            return True
+
+    return False
+
+
 def _is_allowed_return_origin(origin: str | None) -> bool:
     normalized = _normalize_origin(origin)
     if not normalized:
         return False
     allowed = _allowed_return_origins()
-    if not allowed:
-        # Backward-compatible mode if no allowlist is configured yet.
+    if normalized in allowed:
         return True
-    return normalized in allowed
+
+    # Backward-compatible mode: if no explicit return-origin policy is configured,
+    # trust the signed handoff origin and allow postMessage/callback completion.
+    if not _has_explicit_return_origin_policy():
+        return True
+
+    return False
 
 
 def _client_id(provider: str) -> str:

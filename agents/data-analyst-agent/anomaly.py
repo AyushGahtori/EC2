@@ -4,10 +4,6 @@ import math
 from statistics import mean, median
 from typing import Any
 
-import numpy as np
-from sklearn.ensemble import IsolationForest
-
-
 def parse_numeric_series(raw_data: list[Any] | None, max_points: int) -> list[float]:
     if raw_data is None:
         raise ValueError("data is required.")
@@ -31,40 +27,80 @@ def parse_numeric_series(raw_data: list[Any] | None, max_points: int) -> list[fl
 
 
 def _zscore_detection(data: list[float], threshold: float = 3.0) -> list[int]:
-    arr = np.asarray(data, dtype=float)
-    std = float(arr.std())
+    if len(data) < 2:
+        return []
+    avg = mean(data)
+    variance = sum((x - avg) ** 2 for x in data) / len(data)
+    std = math.sqrt(variance)
     if std <= 1e-12:
         return []
-    z_scores = np.abs((arr - arr.mean()) / std)
-    return [int(i) for i in np.where(z_scores > threshold)[0]]
+    flagged: list[int] = []
+    for i, value in enumerate(data):
+        z = abs((value - avg) / std)
+        if z > threshold:
+            flagged.append(i)
+    return flagged
+
+
+def _percentile(sorted_data: list[float], pct: float) -> float:
+    if not sorted_data:
+        return 0.0
+    k = (len(sorted_data) - 1) * pct
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return float(sorted_data[int(k)])
+    return float(sorted_data[f] + (sorted_data[c] - sorted_data[f]) * (k - f))
 
 
 def _isolation_detection(data: list[float]) -> list[int]:
     if len(data) < 4:
         return []
-    arr = np.asarray(data, dtype=float).reshape(-1, 1)
-    contamination = min(0.20, max(1.0 / len(data), 0.02))
-    contamination = min(contamination, 0.49)
-    clf = IsolationForest(
-        contamination=contamination,
-        random_state=42,
-        n_estimators=120,
-    )
-    preds = clf.fit_predict(arr)  # -1 => outlier
-    return [int(i) for i, pred in enumerate(preds) if pred == -1]
+    # Lightweight robust detector that approximates isolation behavior
+    # using median absolute deviation (MAD) and IQR fences.
+    sorted_vals = sorted(data)
+    med = median(sorted_vals)
+    deviations = [abs(v - med) for v in data]
+    mad = median(deviations)
+
+    q1 = _percentile(sorted_vals, 0.25)
+    q3 = _percentile(sorted_vals, 0.75)
+    iqr = q3 - q1
+    lower_fence = q1 - 1.5 * iqr
+    upper_fence = q3 + 1.5 * iqr
+
+    flagged: list[int] = []
+    for i, value in enumerate(data):
+        mad_score = abs(value - med) / max(mad * 1.4826, 1e-9)
+        if value < lower_fence or value > upper_fence or mad_score > 3.5:
+            flagged.append(i)
+    return flagged
 
 
 def _series_stats(data: list[float]) -> dict[str, float | int]:
-    arr = np.asarray(data, dtype=float)
-    q1 = float(np.percentile(arr, 25))
-    q3 = float(np.percentile(arr, 75))
+    if not data:
+        return {
+            "count": 0,
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "std": 0.0,
+            "iqr": 0.0,
+        }
+    sorted_vals = sorted(data)
+    q1 = _percentile(sorted_vals, 0.25)
+    q3 = _percentile(sorted_vals, 0.75)
+    avg = mean(data)
+    variance = sum((x - avg) ** 2 for x in data) / len(data)
+    std = math.sqrt(variance)
     return {
-        "count": int(arr.size),
-        "min": float(arr.min()),
-        "max": float(arr.max()),
-        "mean": float(mean(data)),
-        "median": float(median(data)),
-        "std": float(arr.std()),
+        "count": int(len(data)),
+        "min": float(sorted_vals[0]),
+        "max": float(sorted_vals[-1]),
+        "mean": float(avg),
+        "median": float(median(sorted_vals)),
+        "std": float(std),
         "iqr": float(q3 - q1),
     }
 

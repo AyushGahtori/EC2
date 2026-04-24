@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
+import html
+import json
 import os
 import secrets
 import time
@@ -39,6 +42,9 @@ class LogoutRequest(BaseModel):
     handoff: str
 
 
+BRIDGED_STATE_PREFIX = "ec2"
+
+
 def _forwarded_origin(request: Request) -> str:
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
     host = (
@@ -71,11 +77,18 @@ def _is_https_url(url: str) -> bool:
     return scheme == "https"
 
 
-def _google_bridge_redirect_uri(return_origin: str | None) -> str | None:
+def _web_bridge_redirect_uri(provider: str, return_origin: str | None) -> str | None:
     normalized = _normalize_origin(return_origin)
     if not normalized:
         return None
-    return f"{normalized}/api/google-auth/callback"
+
+    # Keep the existing provider-specific callback routes where they already
+    # exist, and use the generic bridge for every other detached OAuth agent.
+    provider_paths = {
+        "google": "/api/google-auth/callback",
+        "microsoft": "/api/microsoft-auth/callback",
+    }
+    return f"{normalized}{provider_paths.get(provider, '/api/agents/oauth/callback')}"
 
 
 def _effective_redirect_uri(
@@ -100,23 +113,22 @@ def _effective_redirect_uri(
     override = overrides.get(provider, "")
     if override:
         if (
-            provider == "google"
-            and not _is_https_url(override)
+            not _is_https_url(override)
             and not _is_localhost_url(override)
             and not _env_bool("ALLOW_INSECURE_OAUTH_REDIRECTS", False)
         ):
-            bridge_uri = _google_bridge_redirect_uri(return_origin)
+            bridge_uri = _web_bridge_redirect_uri(provider, return_origin)
             if bridge_uri:
                 return bridge_uri
         return override
 
     callback_uri = _callback_url(request, agent_slug)
 
-    # Google does not allow non-localhost HTTP redirect URIs.
+    # Production OAuth providers generally reject non-localhost HTTP callbacks.
     # When EC2 is exposed over plain HTTP (e.g., public IP without TLS),
     # use the web-app callback bridge instead.
-    if provider == "google" and not _is_https_url(callback_uri) and not _is_localhost_url(callback_uri):
-        bridge_uri = _google_bridge_redirect_uri(return_origin)
+    if not _is_https_url(callback_uri) and not _is_localhost_url(callback_uri):
+        bridge_uri = _web_bridge_redirect_uri(provider, return_origin)
         if bridge_uri:
             return bridge_uri
 
@@ -139,6 +151,73 @@ def _env_bool(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+
+def _base64url_json(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(encoded).decode("utf-8").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(f"{value}{padding}")
+
+
+def _bridge_secret() -> str:
+    return _get_env("AGENT_OAUTH_SHARED_SECRET") or _get_env("AGENT_OAUTH_SECRET")
+
+
+def _sign_bridge_segment(segment: str) -> str:
+    secret = _bridge_secret()
+    if not secret:
+        raise HTTPException(status_code=500, detail="AGENT_OAUTH_SHARED_SECRET is not configured.")
+    digest = hmac.new(secret.encode("utf-8"), segment.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
+
+def _encode_bridge_state(*, state_id: str, provider: str, agent_slug: str) -> str:
+    now = int(time.time())
+    payload = {
+        "sid": state_id,
+        "provider": provider,
+        "agentSlug": agent_slug,
+        "iat": now,
+        "exp": now + 900,
+    }
+    segment = _base64url_json(payload)
+    return f"{BRIDGED_STATE_PREFIX}.{segment}.{_sign_bridge_segment(segment)}"
+
+
+def _decode_bridge_state(raw_state: str, *, provider: str, agent_slug: str) -> str:
+    if not raw_state.startswith(f"{BRIDGED_STATE_PREFIX}."):
+        return raw_state
+
+    parts = raw_state.split(".")
+    if len(parts) != 3:
+        raise OAuthStateError("Invalid OAuth bridge state.")
+
+    _, segment, signature = parts
+    expected_signature = _sign_bridge_segment(segment)
+    if not hmac.compare_digest(signature, expected_signature):
+        raise OAuthStateError("Invalid OAuth bridge state signature.")
+
+    try:
+        payload = json.loads(_base64url_decode(segment).decode("utf-8"))
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise OAuthStateError("Invalid OAuth bridge state payload.") from exc
+
+    if payload.get("provider") != provider or payload.get("agentSlug") != agent_slug:
+        raise OAuthStateError("OAuth bridge state target mismatch.")
+
+    expires_at = payload.get("exp")
+    if not isinstance(expires_at, int) or expires_at < int(time.time()):
+        raise OAuthStateError("OAuth bridge state expired.")
+
+    state_id = payload.get("sid")
+    if not isinstance(state_id, str) or not state_id:
+        raise OAuthStateError("OAuth bridge state is missing its state id.")
+
+    return state_id
 
 
 def _normalize_origin(value: str | None) -> str | None:
@@ -257,7 +336,7 @@ def _build_auth_url(
     request: Request,
     agent_slug: str,
     scopes: list[str],
-    state_id: str,
+    state: str,
     redirect_uri: str | None = None,
     pkce_challenge: str | None = None,
 ) -> str:
@@ -272,7 +351,7 @@ def _build_auth_url(
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": " ".join(scopes),
-            "state": state_id,
+            "state": state,
             "access_type": "offline",
             "prompt": "consent",
         }
@@ -284,7 +363,7 @@ def _build_auth_url(
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": " ".join(scopes),
-            "state": state_id,
+            "state": state,
             "prompt": "consent",
         }
         if pkce_challenge:
@@ -301,7 +380,7 @@ def _build_auth_url(
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "owner": "user",
-            "state": state_id,
+            "state": state,
         }
         return f"https://api.notion.com/v1/oauth/authorize?{urlencode(params)}"
 
@@ -310,7 +389,7 @@ def _build_auth_url(
             "client_id": client_id,
             "redirect_uri": redirect_uri,
             "scope": " ".join(scopes),
-            "state": state_id,
+            "state": state,
         }
         return f"https://github.com/login/oauth/authorize?{urlencode(params)}"
 
@@ -320,7 +399,7 @@ def _build_auth_url(
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": " ".join(scopes),
-            "state": state_id,
+            "state": state,
         }
         return f"https://gitlab.com/oauth/authorize?{urlencode(params)}"
 
@@ -331,7 +410,7 @@ def _build_auth_url(
             "response_type": "code",
             "scope": " ".join(scopes),
             "prompt": "consent",
-            "state": state_id,
+            "state": state,
         }
         return f"https://discord.com/api/oauth2/authorize?{urlencode(params)}"
 
@@ -341,7 +420,7 @@ def _build_auth_url(
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "token_access_type": "offline",
-            "state": state_id,
+            "state": state,
         }
         return f"https://www.dropbox.com/oauth2/authorize?{urlencode(params)}"
 
@@ -353,7 +432,7 @@ def _build_auth_url(
             "response_type": "code",
             "prompt": "consent",
             "scope": " ".join(scopes),
-            "state": state_id,
+            "state": state,
         }
         return f"https://auth.atlassian.com/authorize?{urlencode(params)}"
 
@@ -362,7 +441,7 @@ def _build_auth_url(
             "response_type": "code",
             "client_id": client_id,
             "redirect_uri": redirect_uri,
-            "state": state_id,
+            "state": state,
             "scope": " ".join(scopes),
         }
         return f"https://www.linkedin.com/oauth/v2/authorization?{urlencode(params)}"
@@ -372,7 +451,7 @@ def _build_auth_url(
             "response_type": "code",
             "client_id": client_id,
             "redirect_uri": redirect_uri,
-            "state": state_id,
+            "state": state,
         }
         return f"https://zoom.us/oauth/authorize?{urlencode(params)}"
 
@@ -382,7 +461,7 @@ def _build_auth_url(
             "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": " ".join(scopes),
-            "state": state_id,
+            "state": state,
             "code_challenge": pkce_challenge or "",
             "code_challenge_method": "S256",
         }
@@ -638,25 +717,33 @@ def _html_result(
         "provider": provider,
         "message": message,
     }
+    payload_json = json.dumps(payload)
+    safe_message = html.escape(message)
     color = "#16a34a" if success else "#ef4444"
     heading = "Connection complete" if success else "Connection failed"
+    helper = (
+        "This window will close automatically."
+        if success
+        else "This window stayed open so you can see the provider error. Close it and try again after fixing the setup."
+    )
+    close_script = "setTimeout(function () { window.close(); }, 1200);" if success else ""
     target_origin = _normalize_origin(return_origin) if _is_allowed_return_origin(return_origin) else None
 
     return HTMLResponse(
         f"""<html><body style="background:#0a0a0a;color:#f5f5f5;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
             <div style="max-width:420px;text-align:center;padding:24px;border:1px solid rgba(255,255,255,0.12);border-radius:18px;background:rgba(255,255,255,0.03)">
                 <h2 style="margin:0 0 12px;color:{color}">{heading}</h2>
-                <p style="margin:0 0 12px;color:#d4d4d8">{message}</p>
-                <p style="margin:0;color:#71717a">This window will close automatically.</p>
+                <p style="margin:0 0 12px;color:#d4d4d8;white-space:pre-wrap;word-break:break-word">{safe_message}</p>
+                <p style="margin:0;color:#71717a">{helper}</p>
             </div>
             <script>
                 (function () {{
                     try {{
                         if (window.opener && !window.opener.closed && "{target_origin or ''}") {{
-                            window.opener.postMessage({payload}, "{target_origin or ''}");
+                            window.opener.postMessage({payload_json}, "{target_origin or ''}");
                         }}
                     }} catch (_) {{}}
-                    setTimeout(function () {{ window.close(); }}, 1200);
+                    {close_script}
                 }})();
             </script>
         </body></html>""",
@@ -715,12 +802,17 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
                 "pkceVerifier": pkce_verifier,
             }
         )
+        provider_state = _encode_bridge_state(
+            state_id=state_id,
+            provider=provider,
+            agent_slug=agent_slug,
+        )
         auth_url = _build_auth_url(
             provider=provider,
             request=request,
             agent_slug=agent_slug,
             scopes=scopes,
-            state_id=state_id,
+            state=provider_state,
             redirect_uri=redirect_uri,
             pkce_challenge=pkce_challenge,
         )
@@ -733,7 +825,17 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
         state: str = "",
         error: str = "",
     ):
-        peeked_state = peek_oauth_state(state) if state else None
+        try:
+            state_id = _decode_bridge_state(state, provider=provider, agent_slug=agent_slug) if state else ""
+        except OAuthStateError as exc:
+            return _html_result(
+                success=False,
+                message=str(exc),
+                return_origin=None,
+                provider=provider,
+            )
+
+        peeked_state = peek_oauth_state(state_id) if state_id else None
         return_origin = peeked_state.get("returnOrigin") if peeked_state else None
         bundle_id = peeked_state.get("bundleId") if peeked_state else None
         agent_id = peeked_state.get("agentId") if peeked_state else None
@@ -748,7 +850,7 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
                 provider=provider,
             )
 
-        if not code or not state:
+        if not code or not state_id:
             return _html_result(
                 success=False,
                 message="Missing OAuth callback parameters.",
@@ -759,7 +861,7 @@ def register_oauth_routes(app: FastAPI, registration: OAuthAgentRegistration) ->
             )
 
         try:
-            state_payload = consume_oauth_state(state)
+            state_payload = consume_oauth_state(state_id)
             scopes = state_payload.get("scopes")
             if not isinstance(scopes, list):
                 scopes = list(registration.default_scopes)

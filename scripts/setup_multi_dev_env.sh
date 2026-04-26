@@ -56,11 +56,16 @@ install_git_safety_hooks() {
     local target
     for target in "${targets[@]}"; do
         if [[ -d "${target}/.git" ]]; then
+            if [[ ! -f "${target}/.githooks/pre-commit" || ! -f "${target}/scripts/check_git_safety.sh" ]]; then
+                info "Skipping Git safety hook for ${target}; tracked hook files are not present in this checkout yet."
+                continue
+            fi
+
             git -C "${target}" config core.hooksPath .githooks
-            chmod +x \
-                "${target}/.githooks/pre-commit" \
-                "${target}/scripts/check_git_safety.sh" \
-                "${target}/scripts/dev_deploy_agent.sh"
+            chmod +x "${target}/.githooks/pre-commit" "${target}/scripts/check_git_safety.sh"
+            if [[ -f "${target}/scripts/dev_deploy_agent.sh" ]]; then
+                chmod +x "${target}/scripts/dev_deploy_agent.sh"
+            fi
         fi
     done
 }

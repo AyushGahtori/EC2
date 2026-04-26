@@ -29,7 +29,11 @@ done
 if [[ "${MODE}" == "staged" ]]; then
     mapfile -t files < <(git diff --cached --name-only --diff-filter=ACMR)
 else
-    mapfile -t files < <(git diff --name-only --diff-filter=ACMR "${RANGE}")
+    if [[ "${RANGE}" == *"..."* || "${RANGE}" == *".."* ]]; then
+        mapfile -t files < <(git diff --name-only --diff-filter=ACMR "${RANGE}")
+    else
+        mapfile -t files < <(git diff-tree --no-commit-id --name-only -r --diff-filter=ACMR "${RANGE}")
+    fi
 fi
 
 blocked=()

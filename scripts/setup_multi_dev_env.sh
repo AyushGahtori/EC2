@@ -49,7 +49,10 @@ install_git_safety_hooks() {
     for target in "${PROD_APP}" "${BASE_DIR}/app-aaron" "${BASE_DIR}/app-agamya" "${BASE_DIR}/app-naveen"; do
         if [[ -d "${target}/.git" ]]; then
             git -C "${target}" config core.hooksPath .githooks
-            chmod +x "${target}/.githooks/pre-commit" "${target}/scripts/check_git_safety.sh"
+            chmod +x \
+                "${target}/.githooks/pre-commit" \
+                "${target}/scripts/check_git_safety.sh" \
+                "${target}/scripts/dev_deploy_agent.sh"
         fi
     done
 }

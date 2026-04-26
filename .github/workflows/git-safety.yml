@@ -4,8 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - main
-      - ci-cd-development
+      - "**"
 
 jobs:
   block-runtime-config:
@@ -22,6 +21,12 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "range=${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
+            if git rev-parse --verify "${{ github.sha }}^" >/dev/null 2>&1; then
+              echo "range=${{ github.sha }}^...${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            else
+              echo "range=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "range=${{ github.event.before }}...${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi

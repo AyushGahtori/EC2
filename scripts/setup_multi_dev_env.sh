@@ -44,6 +44,16 @@ prepare_git_branches() {
     done
 }
 
+install_git_safety_hooks() {
+    info "Installing tracked Git safety hooks"
+    for target in "${PROD_APP}" "${BASE_DIR}/app-aaron" "${BASE_DIR}/app-agamya" "${BASE_DIR}/app-naveen"; do
+        if [[ -d "${target}/.git" ]]; then
+            git -C "${target}" config core.hooksPath .githooks
+            chmod +x "${target}/.githooks/pre-commit" "${target}/scripts/check_git_safety.sh"
+        fi
+    done
+}
+
 install_systemd_units() {
     info "Rendering developer systemd units"
     python3 "${SCRIPT_DIR}/render_multi_dev_configs.py" \
@@ -79,6 +89,7 @@ install_nginx_config() {
 
 copy_folders
 prepare_git_branches
+install_git_safety_hooks
 install_systemd_units
 install_nginx_config
 

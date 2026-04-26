@@ -71,7 +71,7 @@ def location_blocks(nginx_text: str) -> list[tuple[str, str]]:
     return [
         (match.group("selector").strip(), match.group("body"))
         for match in re.finditer(
-            r"\n[ \t]+location[ \t]+(?P<selector>[^{]+?)\s*\{\s*\n(?P<body>.*?)\n[ \t]+\}\s*",
+            r"\n[ \t]+location[ \t]+(?P<selector>[^{]+?)\s*\{[ \t]*\n(?P<body>.*?)\n[ \t]+\}[ \t]*",
             nginx_text,
             re.DOTALL,
         )
@@ -123,6 +123,7 @@ def render_nginx(source_path: Path, output_path: Path) -> None:
         "    # Multi-developer preview routes. Generated from production locations.",
         "    # Branch prefixes in the frontend route to /api/{developer}/...",
     ]
+    rendered_location_count = 0
 
     for env_name, offset in ENV_OFFSETS.items():
         rendered.append("")
@@ -131,6 +132,10 @@ def render_nginx(source_path: Path, output_path: Path) -> None:
             location = render_dev_location(selector, body, env_name, offset, ports)
             if location:
                 rendered.append(location)
+                rendered_location_count += 1
+
+    if rendered_location_count == 0:
+        raise ValueError(f"no developer Nginx locations rendered from {source_path}")
 
     insert_at = nginx_text.rfind("\n}")
     if insert_at == -1:

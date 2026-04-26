@@ -27,6 +27,8 @@ jobs:
             else
               echo "range=${{ github.sha }}" >> "$GITHUB_OUTPUT"
             fi
+          elif ! git rev-parse --verify "${{ github.event.before }}" >/dev/null 2>&1; then
+            echo "range=${{ github.sha }}" >> "$GITHUB_OUTPUT"
           else
             echo "range=${{ github.event.before }}...${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi

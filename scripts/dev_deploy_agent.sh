@@ -90,10 +90,14 @@ git -C "${app_dir}" clean -fd
 
 echo "[dev-deploy] Installing Git safety hook"
 git -C "${app_dir}" config core.hooksPath .githooks
-chmod +x "${app_dir}/.githooks/pre-commit" "${app_dir}/scripts/check_git_safety.sh"
+chmod +x \
+    "${app_dir}/.githooks/pre-commit" \
+    "${app_dir}/scripts/check_git_safety.sh" \
+    "${app_dir}/scripts/dev_deploy_agent.sh"
 
-echo "[dev-deploy] Verifying no unsafe staged content"
+echo "[dev-deploy] Verifying deployed commit with Git safety policy"
 git -C "${app_dir}" diff --cached --quiet
+git -C "${app_dir}" scripts/check_git_safety.sh --range HEAD
 
 echo "[dev-deploy] Restarting ${service_name}"
 sudo systemctl restart "${service_name}"

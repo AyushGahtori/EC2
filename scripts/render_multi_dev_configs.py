@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import argparse
 import re
+import tempfile
 from pathlib import Path
 
 ENV_OFFSETS = {
-    "aaron": 1000,
-    "agamya": 1100,
-    "naveen": 1200,
+    "aaron": 10000,
+    "agamya": 20000,
+    "naveen": 30000,
 }
 
 
@@ -32,7 +33,6 @@ def render_systemd_units(systemd_dir: Path, output_dir: Path) -> None:
     for service_path in sorted(systemd_dir.glob("*-agent.service")):
         base_text = read(service_path)
         base_port = service_port(base_text)
-        service_name = service_path.name.removesuffix(".service")
 
         for env_name, offset in ENV_OFFSETS.items():
             port = base_port + offset
@@ -47,9 +47,10 @@ def render_systemd_units(systemd_dir: Path, output_dir: Path) -> None:
                     f"Environment=PYTHONUNBUFFERED=1\nEnvironment=PORT={port}\n",
                 )
 
-            text = text.replace(
-                f"Description={service_name.replace('-', ' ').title()} FastAPI Server",
-                f"Description={env_name.title()} {service_name.replace('-', ' ').title()} FastAPI Server",
+            text = re.sub(
+                r"(?m)^Description=(.*)$",
+                rf"Description={env_name.title()} \1",
+                text,
             )
 
             write(output_dir / f"{env_name}-{service_path.name}", text)
@@ -70,7 +71,7 @@ def location_blocks(nginx_text: str) -> list[tuple[str, str]]:
     return [
         (match.group("selector").strip(), match.group("body"))
         for match in re.finditer(
-            r"\n\s{4}location\s+(?P<selector>[^{]+)\{\n(?P<body>.*?)\n\s{4}\}",
+            r"\n[ \t]+location[ \t]+(?P<selector>[^{]+?)\s*\{\s*\n(?P<body>.*?)\n[ \t]+\}\s*",
             nginx_text,
             re.DOTALL,
         )
@@ -115,6 +116,9 @@ def render_nginx(source_path: Path, output_path: Path) -> None:
     nginx_text = read(source_path)
     ports = upstream_ports(nginx_text)
     blocks = location_blocks(nginx_text)
+    if not blocks:
+        raise ValueError(f"no Nginx location blocks found in {source_path}")
+
     rendered: list[str] = [
         "    # Multi-developer preview routes. Generated from production locations.",
         "    # Branch prefixes in the frontend route to /api/{developer}/...",
@@ -139,7 +143,11 @@ def render_nginx(source_path: Path, output_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=Path("/home/ubuntu/app"))
-    parser.add_argument("--output", type=Path, default=Path("/tmp/ei-everyone-multi-dev"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(tempfile.mkdtemp(prefix="ei-multi-dev-")),
+    )
     args = parser.parse_args()
 
     render_systemd_units(args.repo / "systemd", args.output / "systemd")

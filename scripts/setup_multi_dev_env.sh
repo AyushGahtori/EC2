@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 BASE_DIR="/home/ubuntu"
 PROD_APP="${BASE_DIR}/app"
-CONFIG_OUT="/tmp/ei-everyone-multi-dev"
+CONFIG_OUT="${CONFIG_OUT:-}"
 BRANCH_NAME="${BRANCH_NAME:-ci-cd-development}"
 START_SERVICES="${START_SERVICES:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,14 +39,22 @@ prepare_git_branches() {
     for dev in "${DEVELOPERS[@]}"; do
         local target="${BASE_DIR}/app-${dev}"
         info "Preparing ${BRANCH_NAME} in ${target}"
-        git -C "${target}" fetch origin
-        git -C "${target}" switch -C "${BRANCH_NAME}"
+        git -C "${target}" fetch origin "${BRANCH_NAME}"
+        git -C "${target}" switch -C "${BRANCH_NAME}" "origin/${BRANCH_NAME}"
+        git -C "${target}" reset --hard "origin/${BRANCH_NAME}"
     done
 }
 
 install_git_safety_hooks() {
     info "Installing tracked Git safety hooks"
-    for target in "${PROD_APP}" "${BASE_DIR}/app-aaron" "${BASE_DIR}/app-agamya" "${BASE_DIR}/app-naveen"; do
+    local targets=("${PROD_APP}")
+    local dev
+    for dev in "${DEVELOPERS[@]}"; do
+        targets+=("${BASE_DIR}/app-${dev}")
+    done
+
+    local target
+    for target in "${targets[@]}"; do
         if [[ -d "${target}/.git" ]]; then
             git -C "${target}" config core.hooksPath .githooks
             chmod +x \
@@ -59,6 +67,10 @@ install_git_safety_hooks() {
 
 install_systemd_units() {
     info "Rendering developer systemd units"
+    if [[ -z "${CONFIG_OUT}" ]]; then
+        CONFIG_OUT="$(mktemp -d -t ei-multi-dev-XXXXXX)"
+    fi
+
     python3 "${SCRIPT_DIR}/render_multi_dev_configs.py" \
         --repo "${PROD_APP}" \
         --output "${CONFIG_OUT}"
@@ -80,14 +92,23 @@ install_systemd_units() {
 install_nginx_config() {
     local rendered="${CONFIG_OUT}/nginx/agents"
     local nginx_dst="/etc/nginx/sites-available/agents"
-    local backup="/etc/nginx/sites-available/agents.backup.$(date +%Y%m%d%H%M%S)"
+    local backup
+    backup="/etc/nginx/sites-available/agents.backup.$(date +%Y%m%d%H%M%S)"
 
     info "Installing Nginx config with /api/{developer}/... routes"
-    sudo cp "${nginx_dst}" "${backup}"
+    [[ -f "${rendered}" ]] || die "Rendered Nginx config missing: ${rendered}"
+
+    if [[ -f "${nginx_dst}" ]]; then
+        sudo cp "${nginx_dst}" "${backup}"
+    else
+        info "No existing Nginx config found at ${nginx_dst}; skipping backup."
+    fi
+
     sudo install -m 0644 "${rendered}" "${nginx_dst}"
-    sudo nginx -t
-    sudo systemctl reload nginx
-    info "Nginx reloaded. Backup saved at ${backup}"
+    if sudo nginx -t; then
+        sudo systemctl reload nginx
+        info "Nginx reloaded. Backup saved at ${backup}"
+    fi
 }
 
 copy_folders

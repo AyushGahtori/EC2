@@ -6,6 +6,17 @@
 .secrets/
 serviceAccountKey.json
 *.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Runtime output and local process state
+*.log
+*.pid
+*.sock
+tmp/
+.runtime/
 
 # Python artifacts
 venv/
@@ -14,6 +25,14 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
+
+# Developer-only generated runtime config. Production systemd/nginx config may
+# remain tracked, but per-developer generated config must stay out of Git.
+systemd/aaron-*.service
+systemd/agamya-*.service
+systemd/naveen-*.service
+nginx/generated/
+nginx/*generated*
 
 # OS/editor artifacts
 .DS_Store

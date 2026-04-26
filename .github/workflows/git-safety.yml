@@ -1,0 +1,37 @@
+name: Git safety
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  block-runtime-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine diff range
+        id: diff
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "range=${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
+            if git rev-parse --verify "${{ github.sha }}^" >/dev/null 2>&1; then
+              echo "range=${{ github.sha }}^...${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            else
+              echo "range=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            fi
+          elif ! git rev-parse --verify "${{ github.event.before }}" >/dev/null 2>&1; then
+            echo "range=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "range=${{ github.event.before }}...${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Block unsafe files and developer runtime config
+        run: bash scripts/check_git_safety.sh --range "${{ steps.diff.outputs.range }}"

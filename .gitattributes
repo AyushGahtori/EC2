@@ -1,0 +1,4 @@
+*.sh text eol=lf
+scripts/*.py text eol=lf
+.githooks/* text eol=lf
+.github/workflows/*.yml text eol=lf

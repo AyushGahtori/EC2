@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -62,11 +63,27 @@ class GeminiSettings:
         os.getenv("GEMINI_MODEL_FLASH")
         or os.getenv("GEMINI_MODEL")
         or os.getenv("GEMINI_MODEL_PRO")
-        or "gemini-2.5-flash"
+        or "gemini-3-flash-preview"
     ).strip()
+    fallback_models: tuple[str, ...] = ()
 
 
 SETTINGS = GeminiSettings()
+SETTINGS.fallback_models = tuple(
+    model
+    for model in dict.fromkeys(
+        [
+            SETTINGS.model,
+            (os.getenv("GEMINI_MODEL_FLASH") or "").strip(),
+            (os.getenv("GEMINI_MODEL") or "").strip(),
+            (os.getenv("GEMINI_MODEL_PRO") or "").strip(),
+            "gemini-3-flash-preview",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite-preview",
+        ]
+    )
+    if model
+)
 
 
 def _clean(value: str | None) -> str:
@@ -634,42 +651,81 @@ def _gemini_prompt(schema_name: str, query: str, mode: str, title: str | None, a
             "",
             "For brief mode, return keys: searchInsights, contentBrief, reportSections, nextSteps, summary, warnings.",
             "For optimization mode, return keys: searchInsights, articleAudit, sectionEdits, reportSections, nextSteps, summary, warnings.",
+            "reportSections MUST be an array of objects with exactly these keys: title, summary, bullets, kind.",
+            "Do not use heading/body for reportSections. Use title/summary instead.",
+            "sectionEdits.improvedSections MUST be an array of objects with exactly these keys: heading, rewrite.",
             "Use short, actionable prose and preserve the requested field casing exactly.",
         ]
     )
 
 
+def _is_transient_gemini_status(status_code: int) -> bool:
+    return status_code in {408, 409, 429, 500, 502, 503, 504}
+
+
 async def _call_gemini_json(prompt: str) -> tuple[dict[str, Any] | None, str | None]:
     if not SETTINGS.api_key:
         return None, "LLM enrichment is unavailable because GEMINI_API_KEY is not configured."
-    try:
-        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{SETTINGS.model}:generateContent"
-        payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(f"{endpoint}?key={SETTINGS.api_key}", json=payload)
-            resp.raise_for_status()
-        data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            return None, "LLM enrichment returned no candidates, so the SEO agent used its deterministic fallback."
-        parts = (((candidates[0] or {}).get("content") or {}).get("parts")) or []
-        text = "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict))
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None, "LLM enrichment returned an unexpected format, so the SEO agent used its deterministic fallback."
-        parsed = json.loads(text[start : end + 1])
-        if not isinstance(parsed, dict):
-            return None, "LLM enrichment returned an unexpected payload shape, so the SEO agent used its deterministic fallback."
-        return parsed, None
-    except httpx.HTTPStatusError as exc:  # pragma: no cover - external dependency
-        logger.warning("Gemini analysis failed: %s", exc)
-        if exc.response.status_code == 403:
-            return None, "LLM enrichment is currently unavailable because the configured Gemini key was rejected with 403."
-        return None, f"LLM enrichment is currently unavailable ({exc.response.status_code}), so the SEO agent used its deterministic fallback."
-    except Exception as exc:  # pragma: no cover - external dependency
-        logger.warning("Gemini analysis failed: %s", exc)
+    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    last_status: int | None = None
+    last_error: Exception | None = None
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for model in SETTINGS.fallback_models or (SETTINGS.model,):
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            for attempt in range(3):
+                try:
+                    resp = await client.post(f"{endpoint}?key={SETTINGS.api_key}", json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    candidates = data.get("candidates") or []
+                    if not candidates:
+                        return None, "LLM enrichment returned no candidates, so the SEO agent used its deterministic fallback."
+                    parts = (((candidates[0] or {}).get("content") or {}).get("parts")) or []
+                    text = "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict))
+                    start = text.find("{")
+                    end = text.rfind("}")
+                    if start == -1 or end == -1 or end <= start:
+                        return None, "LLM enrichment returned an unexpected format, so the SEO agent used its deterministic fallback."
+                    parsed = json.loads(text[start : end + 1])
+                    if not isinstance(parsed, dict):
+                        return None, "LLM enrichment returned an unexpected payload shape, so the SEO agent used its deterministic fallback."
+                    return parsed, None
+                except httpx.HTTPStatusError as exc:  # pragma: no cover - external dependency
+                    last_error = exc
+                    last_status = exc.response.status_code
+                    logger.warning(
+                        "Gemini analysis failed for model %s (attempt %s/3): %s",
+                        model,
+                        attempt + 1,
+                        exc,
+                    )
+                    if last_status == 403:
+                        return None, "LLM enrichment is currently unavailable because the configured Gemini key was rejected with 403."
+                    if _is_transient_gemini_status(last_status) and attempt < 2:
+                        await asyncio.sleep(1.5 * (attempt + 1))
+                        continue
+                    if _is_transient_gemini_status(last_status):
+                        break
+                    return None, f"LLM enrichment is currently unavailable ({last_status}), so the SEO agent used its deterministic fallback."
+                except Exception as exc:  # pragma: no cover - external dependency
+                    last_error = exc
+                    logger.warning(
+                        "Gemini analysis failed for model %s (attempt %s/3): %s",
+                        model,
+                        attempt + 1,
+                        exc,
+                    )
+                    if attempt < 2:
+                        await asyncio.sleep(1.5 * (attempt + 1))
+                        continue
+                    break
+
+    if last_status is not None:
+        return None, f"LLM enrichment is currently unavailable ({last_status}), so the SEO agent used its deterministic fallback."
+    if last_error is not None:
         return None, "LLM enrichment is currently unavailable, so the SEO agent used its deterministic fallback."
+    return None, "LLM enrichment is currently unavailable, so the SEO agent used its deterministic fallback."
 
 
 def _sanitize_action(action: str | None) -> str:
@@ -704,6 +760,222 @@ def _needs_input_response(action: str, missing_fields: list[str], guidance: str)
 
 def _as_mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _split_list_like_text(text: str) -> list[str]:
+    cleaned = _clean(text)
+    if not cleaned:
+        return []
+    parts = [_clean(part) for part in re.split(r"(?:\r?\n+|[•·;])", cleaned) if _clean(part)]
+    return parts or [cleaned]
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return _clean(value)
+    if isinstance(value, (int, float, bool)):
+        return _clean(str(value))
+    if isinstance(value, list):
+        return _clean(" ".join(filter(None, (_coerce_text(item) for item in value))))
+    if isinstance(value, dict):
+        for key in (
+            "summary",
+            "description",
+            "text",
+            "body",
+            "content",
+            "value",
+            "answer",
+            "rewrite",
+            "title",
+            "heading",
+            "name",
+            "label",
+            "intent",
+        ):
+            text = _coerce_text(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def _coerce_text_list(value: Any) -> list[str]:
+    items: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                text = _coerce_text(
+                    item.get("text")
+                    or item.get("summary")
+                    or item.get("title")
+                    or item.get("heading")
+                    or item.get("question")
+                    or item.get("query")
+                    or item.get("rewrite")
+                    or item
+                )
+            else:
+                text = _coerce_text(item)
+            if text:
+                items.extend(_split_list_like_text(text))
+        return _dedupe(items)
+    if isinstance(value, dict):
+        for item in value.values():
+            text = _coerce_text(item)
+            if text:
+                items.extend(_split_list_like_text(text))
+        return _dedupe(items)
+    text = _coerce_text(value)
+    return _dedupe(_split_list_like_text(text)) if text else []
+
+
+def _normalize_search_insights_payload(value: Any) -> dict[str, Any]:
+    payload = _as_mapping(value)
+    return {
+        "primaryKeywords": _coerce_text_list(
+            payload.get("primaryKeywords") or payload.get("keywords") or payload.get("targetKeywords")
+        ),
+        "relatedKeywords": _coerce_text_list(
+            payload.get("relatedKeywords") or payload.get("semanticKeywords") or payload.get("supportingKeywords")
+        ),
+        "relatedQuestions": _coerce_text_list(
+            payload.get("relatedQuestions") or payload.get("peopleAlsoAsk") or payload.get("questions") or payload.get("faqSuggestions")
+        ),
+        "searchIntent": _coerce_text(payload.get("searchIntent") or payload.get("intent") or payload.get("targetIntent")),
+        "competitorAnalysis": _coerce_text(
+            payload.get("competitorAnalysis") or payload.get("competitorNotes") or payload.get("competitiveLandscape")
+        ),
+        "aiOverviewSummary": _coerce_text(
+            payload.get("aiOverviewSummary") or payload.get("aiOverview") or payload.get("overviewSummary") or payload.get("summary")
+        ),
+        "topResultTitles": _coerce_text_list(
+            payload.get("topResultTitles") or payload.get("competitorTitles") or payload.get("serpTitles")
+        ),
+        "topDomains": _coerce_text_list(payload.get("topDomains") or payload.get("competitorDomains") or payload.get("domains")),
+    }
+
+
+def _normalize_content_brief_payload(value: Any) -> dict[str, Any]:
+    payload = _as_mapping(value)
+    return {
+        "targetIntent": _coerce_text(payload.get("targetIntent") or payload.get("searchIntent") or payload.get("intent")),
+        "contentOutline": _coerce_text(payload.get("contentOutline") or payload.get("outline")),
+        "recommendedHeadings": _coerce_text_list(
+            payload.get("recommendedHeadings") or payload.get("headings") or payload.get("h1H2s")
+        ),
+        "keyEntitiesToMention": _coerce_text_list(
+            payload.get("keyEntitiesToMention") or payload.get("entitiesToMention") or payload.get("entities")
+        ),
+        "faqSuggestions": _coerce_text_list(payload.get("faqSuggestions") or payload.get("faqIdeas") or payload.get("faqs")),
+        "keywordPlacementGuidance": _coerce_text(
+            payload.get("keywordPlacementGuidance") or payload.get("keywordGuidance")
+        ),
+        "contentStructureRecommendations": _coerce_text(
+            payload.get("contentStructureRecommendations") or payload.get("structureRecommendations")
+        ),
+        "writingGuidelines": _coerce_text(
+            payload.get("writingGuidelines") or payload.get("styleGuidelines") or payload.get("editorialGuidelines")
+        ),
+    }
+
+
+def _normalize_article_audit_payload(value: Any) -> dict[str, Any]:
+    payload = _as_mapping(value)
+    return {
+        "contentStrengths": _coerce_text(payload.get("contentStrengths") or payload.get("strengths")),
+        "contentGaps": _coerce_text(payload.get("contentGaps") or payload.get("gaps")),
+        "keywordOpportunities": _coerce_text(
+            payload.get("keywordOpportunities") or payload.get("keywordGaps") or payload.get("keywordSuggestions")
+        ),
+        "structureImprovements": _coerce_text(
+            payload.get("structureImprovements") or payload.get("structureSuggestions")
+        ),
+        "e_e_a_t_assessment": _coerce_text(
+            payload.get("e_e_a_t_assessment") or payload.get("eeatAssessment") or payload.get("eEATAssessment")
+        ),
+        "missingSections": _coerce_text_list(payload.get("missingSections") or payload.get("sectionGaps")),
+        "prioritizedRecommendations": _coerce_text_list(
+            payload.get("prioritizedRecommendations") or payload.get("recommendations") or payload.get("nextActions")
+        ),
+    }
+
+
+def _normalize_section_edits_payload(value: Any) -> dict[str, Any]:
+    payload = _as_mapping(value)
+    raw_sections = payload.get("improvedSections") or payload.get("sectionEdits") or payload.get("rewrites") or []
+    improved_sections: list[dict[str, str]] = []
+    if isinstance(raw_sections, list):
+        for index, item in enumerate(raw_sections, start=1):
+            if not isinstance(item, dict):
+                text = _coerce_text(item)
+                if text:
+                    improved_sections.append({"heading": f"Section {index}", "rewrite": text})
+                continue
+            heading = _coerce_text(item.get("heading") or item.get("title") or item.get("section") or item.get("name"))
+            rewrite = _coerce_text(
+                item.get("rewrite") or item.get("summary") or item.get("body") or item.get("content") or item.get("text")
+            )
+            if heading or rewrite:
+                improved_sections.append({"heading": heading or f"Section {index}", "rewrite": rewrite or heading or ""})
+    return {
+        "improvedSections": improved_sections,
+        "keywordIntegrationSummary": _coerce_text(
+            payload.get("keywordIntegrationSummary") or payload.get("keywordSummary")
+        ),
+        "changesExplanation": _coerce_text(
+            payload.get("changesExplanation") or payload.get("rewriteRationale") or payload.get("explanation")
+        ),
+    }
+
+
+def _normalize_report_section_payload(value: Any, index: int) -> dict[str, Any] | None:
+    if isinstance(value, str):
+        text = _clean(value)
+        if not text:
+            return None
+        return {"title": f"Section {index}", "summary": text, "bullets": [], "kind": "section"}
+    payload = _as_mapping(value)
+    if not payload:
+        return None
+    title = _coerce_text(payload.get("title") or payload.get("heading") or payload.get("sectionTitle") or payload.get("name"))
+    summary = _coerce_text(
+        payload.get("summary") or payload.get("body") or payload.get("description") or payload.get("content") or payload.get("text")
+    )
+    bullets = _coerce_text_list(
+        payload.get("bullets")
+        or payload.get("bulletPoints")
+        or payload.get("keyPoints")
+        or payload.get("points")
+        or payload.get("items")
+        or payload.get("recommendations")
+    )
+    if not summary and bullets:
+        summary = bullets[0]
+        bullets = bullets[1:]
+    if not title and summary:
+        title = f"Section {index}"
+    if not title:
+        return None
+    return {
+        "title": title,
+        "summary": summary or title,
+        "bullets": bullets,
+        "kind": _clean(str(payload.get("kind") or payload.get("type") or "section")).lower() or "section",
+    }
+
+
+def _normalize_report_sections(value: Any) -> list[SEOReportSection]:
+    if not isinstance(value, list):
+        return []
+    sections: list[SEOReportSection] = []
+    for index, item in enumerate(value, start=1):
+        payload = _normalize_report_section_payload(item, index)
+        if not payload:
+            continue
+        sections.append(SEOReportSection(**payload))
+    return sections
 
 
 async def run_seo_analysis(request: SEOActionRequest) -> SEOActionResponse:
@@ -787,35 +1059,31 @@ async def run_seo_analysis(request: SEOActionRequest) -> SEOActionResponse:
         warnings.append(gemini_warning)
     if gemini_json:
         try:
-            search_payload = _as_mapping(gemini_json.get("searchInsights")) or serp.model_dump(mode="json")
+            search_payload = _normalize_search_insights_payload(gemini_json.get("searchInsights")) or serp.model_dump(mode="json")
             search = SEOSearchInsights(**search_payload)
             brief = None
             audit = None
             edits = None
             if should_optimize:
                 mode = "optimization"
-                audit_payload = _as_mapping(gemini_json.get("articleAudit"))
-                edits_payload = _as_mapping(gemini_json.get("sectionEdits"))
-                audit = SEOArticleAudit(**audit_payload) if audit_payload else _fallback_audit(title or query, article_text, query, search)
-                edits = SEOSectionEdits(**edits_payload) if edits_payload else _fallback_edits(title or query, query, audit, search)
+                audit_payload = _normalize_article_audit_payload(gemini_json.get("articleAudit"))
+                edits_payload = _normalize_section_edits_payload(gemini_json.get("sectionEdits"))
+                audit = SEOArticleAudit(**audit_payload) if any(audit_payload.values()) else _fallback_audit(title or query, article_text, query, search)
+                edits = SEOSectionEdits(**edits_payload) if any(edits_payload.values()) else _fallback_edits(title or query, query, audit, search)
             else:
-                brief_payload = _as_mapping(gemini_json.get("contentBrief"))
-                brief = SEOContentBrief(**brief_payload) if brief_payload else _fallback_brief(query, search)
-            report_sections = [
-                SEOReportSection(**item)
-                for item in (gemini_json.get("reportSections") or [])
-                if isinstance(item, dict)
-            ]
+                brief_payload = _normalize_content_brief_payload(gemini_json.get("contentBrief"))
+                brief = SEOContentBrief(**brief_payload) if any(brief_payload.values()) else _fallback_brief(query, search)
+            report_sections = _normalize_report_sections(gemini_json.get("reportSections"))
             if not report_sections:
                 report_sections = _sections(search, brief, audit, edits)
             summary = _clean(str(gemini_json.get("summary") or ("SEO audit generated." if should_optimize else "SEO content brief generated.")))
-            next_steps = [str(item).strip() for item in (gemini_json.get("nextSteps") or []) if str(item).strip()]
+            next_steps = _coerce_text_list(gemini_json.get("nextSteps"))
             if not next_steps:
                 next_steps = [
                     "Review the search insights and turn them into your working outline.",
                     "Apply the recommended structure and keyword guidance while drafting.",
                 ]
-            warnings.extend([str(item).strip() for item in (gemini_json.get("warnings") or []) if str(item).strip()])
+            warnings.extend(_coerce_text_list(gemini_json.get("warnings")))
             result = SEOAnalysisResult(
                 mode=mode,
                 inputMode=input_mode,

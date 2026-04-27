@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class SEOActionRequest(BaseModel):
@@ -59,10 +59,13 @@ class SEOSectionEdits(BaseModel):
 
 
 class SEOReportSection(BaseModel):
-    title: str
-    summary: str
-    bullets: list[str] = Field(default_factory=list)
-    kind: str = "section"
+    title: str = Field(validation_alias=AliasChoices("title", "heading", "sectionTitle", "name"))
+    summary: str = Field(validation_alias=AliasChoices("summary", "body", "description", "content", "text"))
+    bullets: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("bullets", "bulletPoints", "keyPoints", "points", "items", "recommendations"),
+    )
+    kind: str = Field(default="section", validation_alias=AliasChoices("kind", "type"))
 
 
 class SEOAnalysisResult(BaseModel):

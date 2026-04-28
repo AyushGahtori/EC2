@@ -669,11 +669,16 @@ async def _call_gemini_json(prompt: str) -> tuple[dict[str, Any] | None, str | N
     payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     last_status: int | None = None
     last_error: Exception | None = None
+    llm_timeout = float(os.getenv("SEO_AGENT_LLM_TIMEOUT_SECONDS", "18"))
+    max_attempts = max(1, int(os.getenv("SEO_AGENT_LLM_ATTEMPTS", "1")))
+    fallback_models = (SETTINGS.fallback_models or (SETTINGS.model,))[
+        : max(1, int(os.getenv("SEO_AGENT_LLM_MODEL_LIMIT", "2")))
+    ]
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        for model in SETTINGS.fallback_models or (SETTINGS.model,):
+    async with httpx.AsyncClient(timeout=llm_timeout) as client:
+        for model in fallback_models:
             endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            for attempt in range(3):
+            for attempt in range(max_attempts):
                 try:
                     resp = await client.post(f"{endpoint}?key={SETTINGS.api_key}", json=payload)
                     resp.raise_for_status()
@@ -702,7 +707,7 @@ async def _call_gemini_json(prompt: str) -> tuple[dict[str, Any] | None, str | N
                     )
                     if last_status == 403:
                         return None, "LLM enrichment is currently unavailable because the configured Gemini key was rejected with 403."
-                    if _is_transient_gemini_status(last_status) and attempt < 2:
+                    if _is_transient_gemini_status(last_status) and attempt < max_attempts - 1:
                         await asyncio.sleep(1.5 * (attempt + 1))
                         continue
                     if _is_transient_gemini_status(last_status):
@@ -716,7 +721,7 @@ async def _call_gemini_json(prompt: str) -> tuple[dict[str, Any] | None, str | N
                         attempt + 1,
                         exc,
                     )
-                    if attempt < 2:
+                    if attempt < max_attempts - 1:
                         await asyncio.sleep(1.5 * (attempt + 1))
                         continue
                     break

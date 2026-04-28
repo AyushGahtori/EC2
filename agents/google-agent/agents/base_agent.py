@@ -24,9 +24,9 @@ GEMINI_MODEL_MAP = {
     "gemini-3-pro": os.getenv("GEMINI_MODEL_PRO", "gemini-2.5-pro"),
     "gemini-3-flash": os.getenv("GEMINI_MODEL_FLASH", "gemini-2.5-flash"),
     "gemini-3.1-flash-lite": os.getenv("GEMINI_MODEL_FLASH_LITE", "gemini-2.5-flash-lite"),
-    "gemini-3-flash-preview": os.getenv("GEMINI_MODEL_FLASH", "gemini-2.5-flash"),
-    "gemini-3.1-pro-preview": os.getenv("GEMINI_MODEL_PRO", "gemini-2.5-pro"),
-    "gemini-3.1-flash-lite-preview": os.getenv("GEMINI_MODEL_FLASH_LITE", "gemini-2.5-flash-lite"),
+    "gemini-3-flash-preview": os.getenv("GEMINI_MODEL_FLASH", "gemini-3-flash-preview"),
+    "gemini-3.1-pro-preview": os.getenv("GEMINI_MODEL_PRO", "gemini-3.1-pro-preview"),
+    "gemini-3.1-flash-lite-preview": os.getenv("GEMINI_MODEL_FLASH_LITE", "gemini-3.1-flash-lite-preview"),
 }
 
 
@@ -376,6 +376,11 @@ If the current message is continuing a pending request, merge it with the pendin
             raise GoogleAuthRequiredError()
 
         extra_headers = kwargs.pop("headers", {})
+        # Avoid sending blank query parameters (e.g. labelIds=None), which can trigger
+        # Google API validation errors such as "Invalid label:".
+        raw_params = kwargs.get("params")
+        if isinstance(raw_params, dict):
+            kwargs["params"] = {k: v for k, v in raw_params.items() if v is not None}
         max_attempts = 2 if retry_on_failure else 1
 
         for attempt in range(1, max_attempts + 1):

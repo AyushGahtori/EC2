@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+"${repo_root}/scripts/check_git_safety.sh" --staged

@@ -1,0 +1,18 @@
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+.venv/
+.tmp_shelfie_venv/
+
+# Local env and logs
+.env
+backend/.env
+*.log
+*.err.log
+
+# Runtime persistence generated in fallback mode
+backend/runtime_data/
+
+# Node/frontend leftovers from source copy
+node_modules/
+frontend/node_modules/

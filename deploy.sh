@@ -217,6 +217,11 @@ if [[ -z "${SHARED_SECRET}" ]]; then
     maybe_die "AGENT_OAUTH_SHARED_SECRET is required (env or /etc/environment)."
 fi
 
+if [[ -z "${WEB_BASE_URL:-}" && -z "${NEXT_PUBLIC_APP_URL:-}" ]]; then
+    warn "WEB_BASE_URL/NEXT_PUBLIC_APP_URL are not set in the shell environment."
+    warn "Set one of them (or OAUTH_ALLOWED_RETURN_ORIGINS per-agent) so OAuth popups can postMessage back to the web app origin."
+fi
+
 if [[ -n "${PUBLIC_BASE_URL}" && "${PUBLIC_BASE_URL}" != https://* ]]; then
     warn "AGENT_PUBLIC_BASE_URL is not HTTPS (${PUBLIC_BASE_URL}). Configure TLS before production traffic."
 fi

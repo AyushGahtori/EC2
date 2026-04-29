@@ -8,6 +8,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -112,7 +113,7 @@ def _normalize_gmail_action(action: str) -> str:
         return "reply"
     if raw in {"search", "search_emails"}:
         return "search"
-    if raw in {"read", "read_email"}:
+    if raw in {"read", "read_email", "summarize_email", "summarise_email", "email_summary", "summarize_message"}:
         return "read"
     if raw in {"mark_read", "mark_as_read", "mark_email_as_read"}:
         return "mark_read"
@@ -241,12 +242,19 @@ async def google_action(data: GoogleActionRequest):
                 ),
             )
 
+        result_payload = result.get("data", result)
+        if isinstance(result_payload, dict):
+            if result.get("pending_task"):
+                result_payload["pending_task"] = result["pending_task"]
+            if result.get("clear_pending_task"):
+                result_payload["clear_pending_task"] = result["clear_pending_task"]
+
         return GoogleActionResponse(
             status=result.get("status", "success"),
             type=f"google_{data.agent_type}",
             agent_type=data.agent_type,
             action=normalized_action,
-            result=result.get("data", result),
+            result=result_payload,
             summary=result.get("summary"),
             execution_time_ms=(time.time() - start) * 1000,
             error=result.get("error"),

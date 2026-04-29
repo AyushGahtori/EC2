@@ -1,0 +1,9 @@
+fastapi==0.116.1
+uvicorn==0.35.0
+python-dotenv==1.1.1
+pydantic==2.11.7
+langchain-core>=0.3.74,<0.4.0
+langchain-google-genai>=2.1.8,<3.0.0
+langgraph>=0.2.76,<0.3.0
+rich>=13.9.4,<14.0.0
+firebase-admin==7.1.0

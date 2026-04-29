@@ -1,0 +1,156 @@
+{
+  "appetizers": [
+    {
+      "id": "paneer_tikka",
+      "name": "Paneer Tikka",
+      "description": "Char-grilled cottage cheese cubes marinated in yogurt and spices",
+      "price": 249.0,
+      "category": "appetizers",
+      "dietary": ["vegetarian", "gluten_free"],
+      "popular": true,
+      "chef_recommendation": true,
+      "prep_time": 14,
+      "spice_level": 2
+    },
+    {
+      "id": "veg_samosa",
+      "name": "Veg Samosa",
+      "description": "Crispy pastry pockets stuffed with spiced potato and peas, served with chutney",
+      "price": 129.0,
+      "category": "appetizers",
+      "dietary": ["vegetarian"],
+      "popular": true,
+      "chef_recommendation": false,
+      "prep_time": 10,
+      "spice_level": 2
+    }
+  ],
+  "mains": [
+    {
+      "id": "butter_chicken",
+      "name": "Butter Chicken",
+      "description": "Tandoor-grilled chicken simmered in a rich tomato-butter gravy",
+      "price": 399.0,
+      "category": "mains",
+      "dietary": [],
+      "popular": true,
+      "chef_recommendation": true,
+      "prep_time": 20,
+      "spice_level": 2
+    },
+    {
+      "id": "paneer_butter_masala",
+      "name": "Paneer Butter Masala",
+      "description": "Soft paneer cubes in creamy tomato-cashew masala",
+      "price": 349.0,
+      "category": "mains",
+      "dietary": ["vegetarian", "gluten_free"],
+      "popular": true,
+      "chef_recommendation": true,
+      "prep_time": 18,
+      "spice_level": 2
+    },
+    {
+      "id": "chicken_biryani",
+      "name": "Chicken Biryani",
+      "description": "Fragrant basmati rice layered with spiced chicken and herbs",
+      "price": 329.0,
+      "category": "mains",
+      "dietary": [],
+      "popular": true,
+      "chef_recommendation": false,
+      "prep_time": 22,
+      "spice_level": 3
+    },
+    {
+      "id": "masala_dosa",
+      "name": "Masala Dosa",
+      "description": "Crispy South Indian crepe filled with spiced potato masala, served with chutneys",
+      "price": 199.0,
+      "category": "mains",
+      "dietary": ["vegetarian"],
+      "popular": false,
+      "chef_recommendation": false,
+      "prep_time": 15,
+      "spice_level": 1
+    }
+  ],
+  "salads": [
+    {
+      "id": "kachumber_salad",
+      "name": "Kachumber Salad",
+      "description": "Cucumber, tomato, onion, and lemon with mild Indian seasoning",
+      "price": 149.0,
+      "category": "salads",
+      "dietary": ["vegan", "gluten_free"],
+      "popular": false,
+      "chef_recommendation": false,
+      "prep_time": 7,
+      "spice_level": 0
+    },
+    {
+      "id": "sprout_chaat_salad",
+      "name": "Sprout Chaat Salad",
+      "description": "Protein-rich sprouted moong tossed with chutneys and fresh veggies",
+      "price": 179.0,
+      "category": "salads",
+      "dietary": ["vegan", "gluten_free"],
+      "popular": true,
+      "chef_recommendation": false,
+      "prep_time": 9,
+      "spice_level": 2
+    }
+  ],
+  "beverages": [
+    {
+      "id": "masala_chai",
+      "name": "Masala Chai",
+      "description": "Indian spiced milk tea",
+      "price": 79.0,
+      "category": "beverages",
+      "dietary": ["vegetarian"],
+      "popular": true,
+      "chef_recommendation": false,
+      "prep_time": 4,
+      "spice_level": 0
+    },
+    {
+      "id": "mango_lassi",
+      "name": "Mango Lassi",
+      "description": "Refreshing yogurt-based mango drink",
+      "price": 119.0,
+      "category": "beverages",
+      "dietary": ["vegetarian", "gluten_free"],
+      "popular": true,
+      "chef_recommendation": false,
+      "prep_time": 3,
+      "spice_level": 0
+    }
+  ],
+  "desserts": [
+    {
+      "id": "gulab_jamun",
+      "name": "Gulab Jamun",
+      "description": "Soft milk dumplings soaked in warm cardamom sugar syrup",
+      "price": 99.0,
+      "category": "desserts",
+      "dietary": ["vegetarian"],
+      "popular": true,
+      "chef_recommendation": true,
+      "prep_time": 5,
+      "spice_level": 0
+    },
+    {
+      "id": "rasmalai",
+      "name": "Rasmalai",
+      "description": "Cottage cheese patties in chilled saffron milk",
+      "price": 149.0,
+      "category": "desserts",
+      "dietary": ["vegetarian", "gluten_free"],
+      "popular": false,
+      "chef_recommendation": true,
+      "prep_time": 6,
+      "spice_level": 0
+    }
+  ]
+}

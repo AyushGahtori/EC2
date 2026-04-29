@@ -1,0 +1,98 @@
+{
+  "upselling_rules": [
+    {
+      "item": "Chicken Biryani",
+      "upsell_items": ["Raita", "Masala Chai", "Gulab Jamun"],
+      "suggestions": ["boondi raita", "masala chai", "gulab jamun"],
+      "reasons": [
+        "Adds cooling balance to spices",
+        "Classic Indian pairing",
+        "Sweet ending to your meal"
+      ]
+    },
+    {
+      "item": "Butter Chicken",
+      "upsell_items": ["Butter Naan", "Jeera Rice", "Mango Lassi"],
+      "suggestions": ["butter naan", "jeera rice", "mango lassi"],
+      "reasons": [
+        "Perfect with rich gravies",
+        "Completes your main dish",
+        "Refreshing drink pairing"
+      ]
+    },
+    {
+      "item": "Paneer Butter Masala",
+      "upsell_items": ["Lachha Paratha", "Masala Chai", "Gulab Jamun"],
+      "suggestions": ["lachha paratha", "masala chai", "rasmalai"],
+      "reasons": [
+        "Great texture contrast",
+        "Comforting hot beverage",
+        "Popular dessert pairing"
+      ]
+    },
+    {
+      "item": "Masala Dosa",
+      "upsell_items": ["Medu Vada", "Filter Coffee", "Mango Lassi"],
+      "suggestions": ["medu vada", "filter coffee", "mango lassi"],
+      "reasons": [
+        "Classic South Indian combo",
+        "Traditional accompaniment",
+        "Balanced meal add-on"
+      ]
+    },
+    {
+      "item": "Dessert",
+      "upsell_items": ["Masala Chai", "Extra Toppings"]
+    }
+  ],
+  "combo_deals": {
+    "biryani_combo": {
+      "items": ["chicken biryani", "raita", "masala chai"],
+      "price": 499.0,
+      "savings": 79.0,
+      "description": "Classic biryani meal combo"
+    },
+    "paneer_combo": {
+      "items": ["paneer butter masala", "butter naan", "masala chai"],
+      "price": 469.0,
+      "savings": 69.0,
+      "description": "Vegetarian comfort combo"
+    },
+    "family_feast": {
+      "items": ["butter chicken", "chicken biryani", "paneer tikka", "mango lassi"],
+      "price": 999.0,
+      "savings": 149.0,
+      "description": "Perfect for sharing"
+    }
+  },
+  "upsell_triggers": {
+    "order_value_low": {
+      "threshold": 300.0,
+      "suggestions": ["appetizer", "beverage"],
+      "message": "Would you like to start with an appetizer or add a refreshing beverage?"
+    },
+    "order_value_medium": {
+      "threshold": 600.0,
+      "suggestions": ["dessert", "upgrade_sides"],
+      "message": "How about finishing with one of our delicious Indian desserts?"
+    },
+    "single_item": {
+      "suggestions": ["complete_meal"],
+      "message": "Would you like to make this a complete meal?"
+    }
+  },
+  "dietary_upsells": {
+    "vegetarian": {
+      "suggestions": ["paneer_tikka", "masala_dosa", "mango_lassi"],
+      "message": "We have some excellent vegetarian options that would complement your order!"
+    },
+    "gluten_free": {
+      "suggestions": ["butter_chicken", "kachumber_salad", "mango_lassi"],
+      "message": "Our gluten-free options are just as delicious!"
+    },
+    "vegan": {
+      "suggestions": ["sprout_chaat_salad", "kachumber_salad", "fresh_lime_soda"],
+      "message": "Try our plant-based favorites!"
+    }
+  }
+}

@@ -1,40 +1,102 @@
 """
-FastAPI server for the Google Agent.
-
-Exposes a POST /google/action endpoint that receives task data
-from the Firebase Cloud Function or Next.js local orchestrator.
-
-Run with:
-    python server.py (or uvicorn server:app --host 0.0.0.0 --port 8300)
+FastAPI server for the Google Workspace agent.
 """
 
-import os
 import logging
+import os
+import sys
 import time
-from typing import Any, Dict
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Dict
 
 from dotenv import load_dotenv
-
-BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
-
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Agents
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+load_dotenv(BASE_DIR / ".env")
+
 from agents.calendar_agent import CalendarAgent
-from agents.gmail_agent import GmailAgent
-from agents.meet_agent import MeetAgent
+from agents.calling_agent import CallingAgent
 from agents.contacts_agent import ContactsAgent
 from agents.drive_agent import DriveAgent
-from agents.calling_agent import CallingAgent
-from agents.web_search_agent import WebSearchAgent
+from agents.gmail_agent import GmailAgent
+from agents.meet_agent import MeetAgent
 from agents.tasks_agent import TasksAgent
+from agents.web_search_agent import WebSearchAgent
+from ec2_shared.agent_runtime import auth_required_response, resolve_provider_credentials
+from ec2_shared.oauth_router import OAuthAgentRegistration, register_oauth_routes
+from ec2_shared.api_security import apply_api_security
+from google_client import GOOGLE_SCOPES, GoogleAuthRequired
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting Google Workspace Agent...")
+    yield
+    logger.info("Shutting down Google Workspace Agent...")
+
+
+app = FastAPI(
+    title="SnitchX Google Workspace Agent",
+    description="Agent for Google Services (Gmail, Calendar, Meet, Tasks, Drive)",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+apply_api_security(app)
+
+
+class GoogleActionRequest(BaseModel):
+    agent_type: str
+    action: str
+    parameters: str | None = None
+    conversation_context: Dict[str, Any] | None = None
+    llm_provider: str | None = None
+    model: str | None = None
+    message_id: str | None = None
+    strict_resolution: bool | None = None
+    taskId: str | None = None
+    userId: str | None = None
+    agentId: str | None = None
+    chatId: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+
+
+class GoogleActionResponse(BaseModel):
+    status: str
+    type: str | None = None
+    message: str | None = None
+    agent_type: str | None = None
+    action: str | None = None
+    result: dict | str | list | None = None
+    summary: str | None = None
+    error: str | None = None
+    execution_time_ms: float | None = None
+    auth_url: str | None = None
+    provider: str | None = None
+    agentId: str | None = None
+    bundleId: str | None = None
+
+
+AGENT_MAP = {
+    "calendar": CalendarAgent,
+    "gmail": GmailAgent,
+    "meet": MeetAgent,
+    "contacts": ContactsAgent,
+    "drive": DriveAgent,
+    "calling": CallingAgent,
+    "web_search": WebSearchAgent,
+    "tasks": TasksAgent,
+}
 
 
 def _normalize_gmail_action(action: str) -> str:
@@ -83,147 +145,65 @@ def _normalize_action(agent_type: str, action: str) -> str:
         return _normalize_drive_action(action)
     return (action or "").strip()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Manage application lifecycle."""
-    logger.info("🚀 Starting Google Workspace Agent...")
-    yield
-    logger.info("🛑 Shutting down Google Workspace Agent...")
 
-app = FastAPI(
-    title="Pian Google Workspace Agent",
-    description="Agent for Google Services (Gmail, Calendar, Meet, Tasks, Drive)",
-    version="1.0.0",
-    lifespan=lifespan
+def _google_auth_required(message: str) -> dict:
+    return auth_required_response(
+        agent_slug="google",
+        agent_id="google-agent",
+        provider="google",
+        bundle_id="google-bundle",
+        message=message,
+    )
+
+
+register_oauth_routes(
+    app,
+    OAuthAgentRegistration(
+        provider="google",
+        agent_slug="google",
+        display_name="Google Workspace",
+        default_bundle_id="google-bundle",
+        default_scopes=list(GOOGLE_SCOPES),
+    ),
 )
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-class GoogleActionRequest(BaseModel):
-    """Request body from Pian Orchestrator."""
-    agent_type: str  # "gmail", "calendar", "meet", "tasks", "drive", "web_search", "notes", "contacts"
-    action: str
-    parameters: str | None = None
-    conversation_context: Dict[str, Any] | None = None
-    llm_provider: str | None = None
-    model: str | None = None
-    message_id: str | None = None
-    
-    # Optional fields from Orchestrator task execution
-    taskId: str | None = None
-    userId: str | None = None
-    agentId: str | None = None
-    chatId: str | None = None
-    access_token: str | None = None
-    refresh_token: str | None = None
-
-
-class GoogleActionResponse(BaseModel):
-    status: str
-    type: str | None = None
-    agent_type: str | None = None
-    action: str | None = None
-    result: dict | str | list | None = None
-    summary: str | None = None
-    error: str | None = None
-    execution_time_ms: float | None = None
 
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "agent": "google-agent", "version": "1.0.0"}
 
-from fastapi.responses import HTMLResponse, RedirectResponse
-from google_client import auth_store, exchange_code_for_tokens, build_auth_url
-
-@app.get("/auth/login")
-@app.get("/google/auth/login")
-def auth_login():
-    """Redirect user to Google consent screen."""
-    return RedirectResponse(url=build_auth_url())
-
-@app.get("/auth/callback")
-@app.get("/google/auth/callback")
-def auth_callback(code: str = "", error: str = "", redirect_uri: str = ""):
-    """Google redirects here after user grants consent."""
-    if error:
-        return HTMLResponse(
-            f"<h2>❌ Google Auth Error</h2><p>{error}</p><p>Close this tab and try again.</p>",
-            status_code=400,
-        )
-    if not code:
-        return HTMLResponse(
-            "<h2>❌ Missing authorization code</h2><p>Close this tab and try again.</p>",
-            status_code=400,
-        )
-    try:
-        exchange_code_for_tokens(code, redirect_uri=redirect_uri or None)
-        return HTMLResponse(
-            "<h2>✅ Google account connected!</h2>"
-            "<p>You can close this tab and go back to Pian.</p>"
-            "<script>setTimeout(()=>window.close(),3000)</script>"
-        )
-    except Exception as exc:
-        return HTMLResponse(
-            f"<h2>❌ Token exchange failed</h2><p>{str(exc)}</p>",
-            status_code=500,
-        )
-
-@app.get("/auth/status")
-@app.get("/google/auth/status")
-def auth_status():
-    """Check if agent is authenticated."""
-    token = auth_store.get("access_token")
-    if token:
-        return {"authenticated": True}
-    return {"authenticated": False}
-
-@app.post("/auth/logout")
-@app.post("/google/auth/logout")
-def auth_logout():
-    """Log out from Google."""
-    auth_store["access_token"] = None
-    auth_store["refresh_token"] = None
-    auth_store["expires_at"] = 0
-    return {"status": "logged_out"}
 
 @app.post("/google/action", response_model=GoogleActionResponse)
 async def google_action(data: GoogleActionRequest):
-    """
-    Execute a Google agent action.
-    """
-    agent_map = {
-        "calendar": CalendarAgent,
-        "gmail": GmailAgent,
-        "meet": MeetAgent,
-        "contacts": ContactsAgent,
-        "drive": DriveAgent,
-        "calling": CallingAgent,
-        "web_search": WebSearchAgent,
-        "tasks": TasksAgent,
-    }
-
-    agent_class = agent_map.get(data.agent_type.lower() if data.agent_type else "")
+    agent_class = AGENT_MAP.get(data.agent_type.lower() if data.agent_type else "")
     if not agent_class:
         raise HTTPException(status_code=400, detail=f"Unknown or missing agent_type: {data.agent_type}")
 
     start = time.time()
+    credentials = resolve_provider_credentials(
+        user_id=data.userId,
+        provider="google",
+        access_token=data.access_token,
+        refresh_token=data.refresh_token,
+    )
+    access_token = credentials.get("access_token")
+    refresh_token = credentials.get("refresh_token")
+
+    if not access_token and not refresh_token:
+        return GoogleActionResponse(
+            execution_time_ms=(time.time() - start) * 1000,
+            **_google_auth_required(
+                "Google access token is missing. Please connect your Google account."
+            ),
+        )
+
     normalized_action = _normalize_action(data.agent_type, data.action)
-    
-    # In a real deployed environment, these tokens would be dynamically fetched from the DB via the user_id attached.
-    # We pass empty for now, assuming the agent implements an internal fallback or default config.
+
     try:
         agent = agent_class(
-            access_token=data.access_token or "",
+            access_token=access_token or "",
             user_id=data.userId or "default_user",
-            refresh_token=data.refresh_token or "",
+            refresh_token=refresh_token or "",
         )
 
         user_message = f"{normalized_action} {data.parameters or ''}".strip()
@@ -246,23 +226,22 @@ async def google_action(data: GoogleActionRequest):
             agent_context["model"] = data.model
         if data.message_id:
             agent_context["pre_resolved_message_id"] = data.message_id
-        
+        if data.strict_resolution:
+            agent_context["strict_resolution"] = True
+
         result = await agent.handle(
             user_message=user_message,
             context=agent_context,
         )
 
-        # If the agent returned action_required with auth_url, signal google_auth
-        if result.get("status") == "action_required" and result.get("auth_url"):
+        if result.get("status") == "action_required":
             return GoogleActionResponse(
-                status="action_required",
-                type="google_auth",
-                agent_type=data.agent_type,
-                action=normalized_action,
-                result={"auth_url": result["auth_url"]},
                 execution_time_ms=(time.time() - start) * 1000,
+                **_google_auth_required(
+                    "Google account authorization is required before this action can run."
+                ),
             )
-        
+
         result_payload = result.get("data", result)
         if isinstance(result_payload, dict):
             if result.get("pending_task"):
@@ -278,30 +257,24 @@ async def google_action(data: GoogleActionRequest):
             result=result_payload,
             summary=result.get("summary"),
             execution_time_ms=(time.time() - start) * 1000,
-            error=result.get("error")
+            error=result.get("error"),
         )
-
+    except GoogleAuthRequired:
+        return GoogleActionResponse(
+            execution_time_ms=(time.time() - start) * 1000,
+            **_google_auth_required(
+                "Google account authorization is required before this action can run."
+            ),
+        )
     except Exception as exc:
-        # Check if the agent result itself signaled auth_required
-        # (this happens when the agent catches the error internally and returns a dict)
-        if hasattr(exc, '__class__') and 'GoogleAuthRequired' in type(exc).__name__:
-            from google_client import build_auth_url
-            return GoogleActionResponse(
-                status="action_required",
-                type="google_auth",
-                agent_type=data.agent_type,
-                action=data.action,
-                result={"auth_url": "/api/google-auth/login"},
-                execution_time_ms=(time.time() - start) * 1000,
-            )
-
-        # Check if the result dict contains auth_url (from handle_google_exception)
         raise HTTPException(
             status_code=500,
-            detail=f"Google Agent execution failed: {str(exc)}",
-        )
+            detail=f"Google Agent execution failed: {exc}",
+        ) from exc
+
 
 if __name__ == "__main__":
     import uvicorn
+
     port = int(os.getenv("PORT", "8300"))
     uvicorn.run(app, host="0.0.0.0", port=port)

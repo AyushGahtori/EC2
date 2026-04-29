@@ -313,18 +313,38 @@ class GmailAgent(BaseAgent):
         user_message: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        params = await self.extract_parameters(
-            user_message=user_message,
-            schema_description="""
+        strict_resolution = bool((context or {}).get("strict_resolution"))
+        pre_resolved_id = self._clean_text_value(
+            str((context or {}).get("pre_resolved_message_id", ""))
+        )
+
+        if pre_resolved_id:
+            message_id = pre_resolved_id
+            query = user_message
+        else:
+            if strict_resolution:
+                return {
+                    "status": "needs_input",
+                    "agent": self.agent_name,
+                    "summary": "I need the exact Gmail message ID from the orchestrator before reading this email.",
+                    "data": {
+                        "missing_fields": ["message_id"],
+                        "query": user_message,
+                        "resolution_required": True,
+                    },
+                }
+            params = await self.extract_parameters(
+                user_message=user_message,
+                schema_description="""
 - message_id: exact Gmail message id if known
 - query: Gmail search query or description of the message to read
             """,
-            example_output='{"message_id": null, "query": "from:alice budget"}',
-            context=context,
-        )
+                example_output='{"message_id": null, "query": "from:alice budget"}',
+                context=context,
+            )
 
-        message_id = self._clean_text_value(str(params.get("message_id", "")))
-        query = self._clean_text_value(str(params.get("query", "")))
+            message_id = self._clean_text_value(str(params.get("message_id", "")))
+            query = self._clean_text_value(str(params.get("query", "")))
 
         if not message_id:
             message_match = await self._find_message_match(query=query or user_message)
@@ -345,7 +365,8 @@ class GmailAgent(BaseAgent):
         headers = self._extract_headers(detail)
         body = self._extract_message_body(detail.get("payload", {}))
         snippet = detail.get("snippet", "")
-        text_for_summary = body or snippet or "No readable body was available."
+        raw_text_for_summary = body or snippet or "No readable body was available."
+        text_for_summary = self._clean_email_body_for_summary(raw_text_for_summary)
 
         summary = await self.llm_complete(
             messages=[
@@ -356,13 +377,23 @@ class GmailAgent(BaseAgent):
                         f"From: {headers.get('From', 'Unknown')}\n"
                         f"Subject: {headers.get('Subject', 'No Subject')}\n"
                         f"Date: {headers.get('Date', 'Unknown')}\n\n"
-                        f"Email body:\n{text_for_summary[:5000]}"
+                        f"Email content:\n{text_for_summary[:7000]}"
                     ),
                 }
             ],
             system_prompt=(
-                "You summarize Gmail messages for the user. Mention sender, topic, asks, deadlines, "
-                "and any follow-up needed. Keep it concise and factual."
+                "You summarize Gmail messages for a busy user. Ignore unsubscribe text, tracking links, "
+                "social links, legal footers, navigation, and boilerplate. Extract the useful content: "
+                "what happened, important numbers/details, asks, deadlines, and follow-up. If the email "
+                "is a newsletter or report, summarize the actual metrics or takeaways rather than saying "
+                "it is informational. Return this exact plain-text structure:\n"
+                "Sender: <sender>\n"
+                "Subject: <subject>\n"
+                "Summary: <one useful sentence>\n"
+                "Key points:\n"
+                "- <point>\n"
+                "- <point>\n"
+                "Follow-up: <action or None needed>"
             ),
             context=context,
         )
@@ -386,18 +417,38 @@ class GmailAgent(BaseAgent):
         user_message: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        params = await self.extract_parameters(
-            user_message=user_message,
-            schema_description="""
+        strict_resolution = bool((context or {}).get("strict_resolution"))
+        pre_resolved_id = self._clean_text_value(
+            str((context or {}).get("pre_resolved_message_id", ""))
+        )
+
+        if pre_resolved_id:
+            message_id = pre_resolved_id
+            query = user_message
+        else:
+            if strict_resolution:
+                return {
+                    "status": "needs_input",
+                    "agent": self.agent_name,
+                    "summary": "I need the exact Gmail message ID from the orchestrator before marking this email as read.",
+                    "data": {
+                        "missing_fields": ["message_id"],
+                        "query": user_message,
+                        "resolution_required": True,
+                    },
+                }
+            params = await self.extract_parameters(
+                user_message=user_message,
+                schema_description="""
 - message_id: exact Gmail message id if known
 - query: Gmail search query or description of the message to mark as read
             """,
-            example_output='{"message_id": null, "query": "from:alice budget"}',
-            context=context,
-        )
+                example_output='{"message_id": null, "query": "from:alice budget"}',
+                context=context,
+            )
 
-        message_id = self._clean_text_value(str(params.get("message_id", "")))
-        query = self._clean_text_value(str(params.get("query", "")))
+            message_id = self._clean_text_value(str(params.get("message_id", "")))
+            query = self._clean_text_value(str(params.get("query", "")))
 
         if not message_id:
             message_match = await self._find_message_match(query=query or user_message)
@@ -526,6 +577,44 @@ class GmailAgent(BaseAgent):
                     return body
 
         return ""
+
+    def _clean_email_body_for_summary(self, body: str) -> str:
+        text = body or ""
+        text = re.sub(r"https?://\S+", " ", text)
+        text = re.sub(r"<https?://[^>]+>", " ", text)
+        text = re.sub(r"\[[^\]]*\]\(https?://[^)]+\)", " ", text)
+        text = re.sub(r"[\u200b-\u200f\ufeff]", "", text)
+
+        footer_patterns = [
+            r"\bView Web Version\b",
+            r"\bEmail Preferences\b",
+            r"\bUnsubscribe\b",
+            r"\bManage your notification\b",
+            r"\bThis email was sent\b",
+            r"\bYou are receiving this email\b",
+            r"\bPrivacy Policy\b",
+        ]
+        cut_at = len(text)
+        for pattern in footer_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                cut_at = min(cut_at, match.start())
+        text = text[:cut_at]
+
+        lines = []
+        for raw_line in text.splitlines():
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            if not line:
+                continue
+            if re.fullmatch(r"[•·|\\/\-_\s]+", line):
+                continue
+            if line.lower() in {"facebook", "instagram", "linkedin", "x", "twitter"}:
+                continue
+            lines.append(line)
+
+        cleaned = "\n".join(lines)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        return cleaned or "No readable body was available."
 
     def _decode_body(self, encoded_body: str) -> str:
         padding = len(encoded_body) % 4

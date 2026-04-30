@@ -5,6 +5,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import json
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -63,7 +64,39 @@ def _normalize_action(action: str) -> str:
 
 
 def _resolve_prompt(req: ShelfieActionRequest) -> str:
-    return _clean(req.prompt) or _clean(req.message) or _clean(req.query)
+    base_prompt = _clean(req.prompt) or _clean(req.message) or _clean(req.query)
+    context_lines: list[str] = []
+
+    buying_date = _clean(getattr(req, "buying_date", None))
+    end_date = _clean(getattr(req, "end_date", None))
+    lasts_for_days = getattr(req, "lasts_for_days", None)
+    workspace_grocery_memory = getattr(req, "workspace_grocery_memory", None)
+
+    if buying_date:
+        context_lines.append(f"Buying date: {buying_date}")
+    if end_date:
+        context_lines.append(f"End date: {end_date}")
+    if lasts_for_days not in (None, ""):
+        context_lines.append(f"Duration in days: {lasts_for_days}")
+
+    if workspace_grocery_memory:
+        try:
+            rendered_memory = json.dumps(workspace_grocery_memory, ensure_ascii=True)
+            context_lines.append(f"Existing grocery memory: {rendered_memory[:6000]}")
+        except Exception:
+            context_lines.append("Existing grocery memory is present but could not be serialized cleanly.")
+
+    if not context_lines:
+        return base_prompt
+
+    return "\n".join(
+        [
+            base_prompt,
+            "",
+            "Structured grocery context:",
+            *context_lines,
+        ]
+    ).strip()
 
 
 def _resolve_session_id(req: ShelfieActionRequest) -> str:
@@ -165,6 +198,14 @@ async def shelfie_action(req: ShelfieActionRequest) -> ShelfieActionResponse:
 
             session_id = _resolve_session_id(req)
             user_id = _resolve_user_id(req)
+            logger.info(
+                "Shelfie run request session_id=%s user_id=%s buying_date=%s end_date=%s has_workspace_memory=%s",
+                session_id,
+                user_id,
+                _clean(getattr(req, "buying_date", None)),
+                _clean(getattr(req, "end_date", None)),
+                bool(getattr(req, "workspace_grocery_memory", None)),
+            )
             reply = await service.generate_reply(
                 session_id=session_id,
                 user_id=user_id,

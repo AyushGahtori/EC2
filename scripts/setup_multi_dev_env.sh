@@ -8,7 +8,7 @@ BRANCH_NAME="${BRANCH_NAME:-ci-cd-development}"
 START_SERVICES="${START_SERVICES:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-DEVELOPERS=(aaron agamya naveen)
+DEVELOPERS=(aaron agamya naveen gunjan)
 
 info() { printf '[multi-dev] %s\n' "$*"; }
 die() { printf '[multi-dev:error] %s\n' "$*" >&2; exit 1; }
@@ -20,7 +20,7 @@ copy_folders() {
     for dev in "${DEVELOPERS[@]}"; do
         local target="${BASE_DIR}/app-${dev}"
         case "${target}" in
-            /home/ubuntu/app-aaron|/home/ubuntu/app-agamya|/home/ubuntu/app-naveen) ;;
+            /home/ubuntu/app-aaron|/home/ubuntu/app-agamya|/home/ubuntu/app-naveen|/home/ubuntu/app-gunjan) ;;
             *) die "Refusing unsafe target: ${target}" ;;
         esac
 

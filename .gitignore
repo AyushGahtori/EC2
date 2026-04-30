@@ -1,0 +1,61 @@
+# Runtime secrets and local env
+.env
+.env.*
+!.env.example
+!**/.env.example
+.secrets/
+serviceAccountKey.json
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Runtime output and local process state
+*.log
+*.pid
+*.sock
+tmp/
+.runtime/
+
+# Python artifacts
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Developer-only generated runtime config. Production systemd/nginx config may
+# remain tracked, but per-developer generated config must stay out of Git.
+systemd/aaron-*.service
+systemd/agamya-*.service
+systemd/naveen-*.service
+systemd/gunjan-*.service
+nginx/generated/
+nginx/*generated*
+
+# OS/editor artifacts
+.DS_Store
+Thumbs.db
+
+# Prevent accidental mixing of SaaS web-app files in this EC2 repo
+/.next/
+/node_modules/
+/coverage/
+/dist/
+/build/
+/src/
+/public/
+/functions/
+/memory-extraction/
+/package.json
+/package-lock.json
+/next.config.js
+/tailwind.config.js
+/postcss.config.js
+/tsconfig.json
+/tsconfig.tsbuildinfo
+/firebase.json
+/.firebaserc
+/components.json

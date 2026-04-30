@@ -63,7 +63,7 @@ is_blocked_path() {
         *.log|*.pid|*.sock|tmp/*|*/tmp/*|.runtime/*|*/.runtime/*)
             return 0
             ;;
-        systemd/aaron-*.service|systemd/agamya-*.service|systemd/naveen-*.service)
+        systemd/aaron-*.service|systemd/agamya-*.service|systemd/naveen-*.service|systemd/gunjan-*.service)
             return 0
             ;;
         nginx/generated/*|nginx/*generated*)
@@ -83,7 +83,7 @@ for file in "${files[@]}"; do
     [[ -f "${file}" ]] || continue
 
     if [[ "${file}" == systemd/*.service || "${file}" == nginx/* || "${file}" == nginx/sites-available/* ]]; then
-        if grep -Eq '/home/ubuntu/app-(aaron|agamya|naveen)\b|(^|[^[:alnum:]_-])(aaron|agamya|naveen)-[a-z0-9-]+-agent|/api/(aaron|agamya|naveen)/' "${file}"; then
+        if grep -Eq '/home/ubuntu/app-(aaron|agamya|naveen|gunjan)\b|(^|[^[:alnum:]_-])(aaron|agamya|naveen|gunjan)-[a-z0-9-]+-agent|/api/(aaron|agamya|naveen|gunjan)/' "${file}"; then
             add_block "${file}" "developer runtime config detected inside production-tracked config"
         fi
     fi
@@ -96,7 +96,7 @@ Blocked unsafe Git contents.
 Only actual reusable code should be committed from developer EC2 folders.
 Do not commit secrets, .env files, virtualenvs, logs, generated developer
 systemd units, generated Nginx routes, or config pointing at app-aaron,
-app-agamya, or app-naveen.
+app-agamya, app-naveen, or app-gunjan.
 
 Blocked files:
 MESSAGE

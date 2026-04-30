@@ -72,6 +72,7 @@ AGENT_DIRS=(
     "devika-engineer-agent"
     "data-analyst-agent"
     "cyber-soc-agent"
+    "shelfie-grocery-agent"
 )
 
 AUTH_SLUGS=(
@@ -297,6 +298,7 @@ check_health "restaurant-concierge-agent" 8044 "/restaurant/health"
 check_health "devika-engineer-agent" 8041 "/health"
 check_health "data-analyst-agent" 8042 "/health"
 check_health "cyber-soc-agent" 8043 "/cybersoc/health"
+check_health "shelfie-grocery-agent" 8045 "/health"
 
 info "Smoke testing public Nginx routes..."
 check_nginx "/health"
@@ -333,6 +335,7 @@ check_nginx "/restaurant/health"
 check_nginx "/devika/health"
 check_nginx "/dataanalyst/health"
 check_nginx "/cybersoc/health"
+check_nginx "/shelfie/health"
 
 info "Smoke testing public OAuth routes..."
 for slug in "${AUTH_SLUGS[@]}"; do

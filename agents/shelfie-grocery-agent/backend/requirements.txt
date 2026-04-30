@@ -1,0 +1,11 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic-settings==2.5.2
+langgraph==1.1.10
+langchain-openai==1.2.1
+langchain-anthropic==1.4.2
+langchain-google-genai==4.2.2
+langchain-ollama==1.1.0
+redis==5.0.8
+motor==3.6.0
+python-dotenv==1.0.1

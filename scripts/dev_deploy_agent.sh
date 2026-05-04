@@ -4,7 +4,7 @@ set -Eeuo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/dev_deploy_agent.sh <aaron|agamya|naveen> <agent-name> <branch>
+  scripts/dev_deploy_agent.sh <aaron|agamya|naveen|gunjan> <agent-name> <branch>
 
 Example:
   scripts/dev_deploy_agent.sh aaron github-agent aaron/fix-github-agent
@@ -29,7 +29,7 @@ agent_name="$2"
 branch="$3"
 
 case "${developer}" in
-    aaron|agamya|naveen) ;;
+    aaron|agamya|naveen|gunjan) ;;
     *)
         echo "Invalid developer: ${developer}" >&2
         usage >&2
@@ -57,7 +57,7 @@ app_dir="/home/ubuntu/app-${developer}"
 service_name="${developer}-${agent_name}.service"
 
 case "${app_dir}" in
-    /home/ubuntu/app-aaron|/home/ubuntu/app-agamya|/home/ubuntu/app-naveen) ;;
+    /home/ubuntu/app-aaron|/home/ubuntu/app-agamya|/home/ubuntu/app-naveen|/home/ubuntu/app-gunjan) ;;
     *)
         echo "Unsafe app dir: ${app_dir}" >&2
         exit 1

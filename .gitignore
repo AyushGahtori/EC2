@@ -31,6 +31,7 @@ __pycache__/
 systemd/aaron-*.service
 systemd/agamya-*.service
 systemd/naveen-*.service
+systemd/gunjan-*.service
 nginx/generated/
 nginx/*generated*
 

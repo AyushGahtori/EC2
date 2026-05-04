@@ -10,9 +10,9 @@ Run with:
 
 import os
 import logging
+import os
+import sys
 import time
-from typing import Any, Dict
-from pathlib import Path
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -107,8 +107,7 @@ app.add_middleware(
 
 
 class GoogleActionRequest(BaseModel):
-    """Request body from Pian Orchestrator."""
-    agent_type: str  # "gmail", "calendar", "meet", "tasks", "drive", "web_search", "notes", "contacts"
+    agent_type: str
     action: str
     parameters: str | None = None
     conversation_context: Dict[str, Any] | None = None

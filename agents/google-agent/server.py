@@ -115,6 +115,8 @@ class GoogleActionRequest(BaseModel):
     llm_provider: str | None = None
     model: str | None = None
     message_id: str | None = None
+    file_id: str | None = None
+    strict_resolution: bool | None = None
     
     # Optional fields from Orchestrator task execution
     taskId: str | None = None
@@ -246,6 +248,10 @@ async def google_action(data: GoogleActionRequest):
             agent_context["model"] = data.model
         if data.message_id:
             agent_context["pre_resolved_message_id"] = data.message_id
+        if data.file_id:
+            agent_context["pre_resolved_file_id"] = data.file_id
+        if data.strict_resolution:
+            agent_context["strict_resolution"] = True
         
         result = await agent.handle(
             user_message=user_message,

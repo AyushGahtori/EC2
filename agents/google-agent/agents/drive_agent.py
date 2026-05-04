@@ -63,6 +63,7 @@ class DriveAgent(BaseAgent):
             action = forced_action
         else:
             action = await self._determine_action(user_message, context)
+
         action = self.normalize_action(action)
 
         if action == "list":
@@ -409,7 +410,10 @@ class DriveAgent(BaseAgent):
         user_message: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        context = context or {}
+        pre_resolved_file_id = str(context.get("pre_resolved_file_id", "")).strip()
         query = self._sanitize_query(self._extract_query_from_message(user_message))
+
         params = await self.extract_parameters(
             user_message=user_message,
             schema_description="""
@@ -419,20 +423,31 @@ class DriveAgent(BaseAgent):
             context=context,
         )
         query = query or self._sanitize_query((params.get("query") or "").strip())
-        if not query:
+
+        if pre_resolved_file_id:
+            match = await self._get_file_by_id(pre_resolved_file_id)
+            if isinstance(match, dict) and match.get("status") == "error":
+                return match
+            if not match:
+                return self.failure(
+                    error="FILE_NOT_FOUND",
+                    message="I could not access the selected Drive file. Please choose it again from a fresh Drive list.",
+                    data={"file_id": pre_resolved_file_id},
+                )
+        elif not query:
             return self.failure(
                 error="VALIDATION_ERROR",
                 message="Please specify the Google Drive file you want me to read or summarize.",
             )
-
-        match = await self._find_file_match(query, user_message=user_message)
-        if isinstance(match, dict) and match.get("status") == "error":
-            return match
-        if not match:
-            return self.success(
-                summary=f"I could not find a Drive file matching '{query}'.",
-                data={"query": query},
-            )
+        else:
+            match = await self._find_file_match(query, user_message=user_message)
+            if isinstance(match, dict) and match.get("status") == "error":
+                return match
+            if not match:
+                return self.success(
+                    summary=f"I could not find a Drive file matching '{query}'.",
+                    data={"query": query},
+                )
 
         file_text_response = await self._download_file_text(match)
         if isinstance(file_text_response, dict) and file_text_response.get("status") in {"error", "action_required"}:
@@ -631,6 +646,35 @@ class DriveAgent(BaseAgent):
             return self.handle_google_api_error("Drive", response, data={"query": query})
         return response.json().get("files", [])
 
+    async def _get_file_by_id(self, file_id: str) -> Optional[Dict[str, Any]] | Dict[str, Any]:
+        cleaned_file_id = str(file_id or "").strip()
+        if not cleaned_file_id:
+            return None
+
+        cache = self._get_cache()
+        cached = cache.get("items_by_id", {}).get(cleaned_file_id)
+        if isinstance(cached, dict):
+            return cached
+
+        try:
+            response = await self.request_google_api(
+                "GET",
+                f"{DRIVE_BASE_URL}/files/{cleaned_file_id}",
+                params={"fields": "id,name,mimeType,modifiedTime,webViewLink,parents"},
+                retry_on_failure=True,
+            )
+        except Exception as exc:
+            return self.handle_google_exception("Drive", exc, data={"file_id": cleaned_file_id})
+
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            return self.handle_google_api_error("Drive", response, data={"file_id": cleaned_file_id})
+
+        file_data = response.json()
+        self._update_cache([file_data])
+        return file_data
+
     async def _download_file_text(self, file_data: Dict[str, Any]) -> Dict[str, str] | Dict[str, Any]:
         file_id = file_data["id"]
         mime_type = file_data.get("mimeType", "")
@@ -692,7 +736,8 @@ class DriveAgent(BaseAgent):
             re.IGNORECASE,
         )
         if filename_match:
-            return filename_match.group(1).strip()
+            return self._strip_query_leading_fillers(filename_match.group(1).strip())
+
         return ""
 
     def _extract_folder_query(self, user_message: str) -> str:
@@ -734,6 +779,7 @@ class DriveAgent(BaseAgent):
             cleaned,
             flags=re.IGNORECASE,
         )
+        cleaned = self._strip_query_leading_fillers(cleaned)
         cleaned = re.sub(
             r"\b(from this|from (my\s+)?drive|in (my\s+)?drive|google drive|inside|within|under|folder)\b",
             "",
@@ -748,6 +794,28 @@ class DriveAgent(BaseAgent):
         )
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:")
         return cleaned
+
+    def _strip_query_leading_fillers(self, value: str) -> str:
+        cleaned = (value or "").strip()
+        cleaned = re.sub(
+            r"^(please\s+)?(can you\s+|could you\s+)?",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(summarize|summarise|read|open|explain|find|search|show)\s+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"^(?:(the|a|an|this|that|same|one|file|document|pdf)\s+)+",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r"\s+", " ", cleaned).strip(" .,:")
 
     def _extract_requested_limit(self, user_message: str) -> Optional[int]:
         text = (user_message or "").lower()
@@ -1004,11 +1072,12 @@ class DriveAgent(BaseAgent):
             mime = str(file_data.get("mimeType", "")).lower()
             parents = file_data.get("parents") or []
             current = 0
+
             if normalized_query and name == normalized_query:
                 current += 100
             if normalized_query and normalized_query in name:
                 current += 40
-            if prefer_pdf and (mime == "application/pdf" or name.endswith(".pdf")):
+            if prefer_pdf and ("application/pdf" in mime or name.endswith(".pdf")):
                 current += 30
             if prefer_folder and mime == FOLDER_MIME_TYPE:
                 current += 30
@@ -1161,6 +1230,3 @@ class DriveAgent(BaseAgent):
                 break
 
         return "\n\n".join(chunks).strip()
-
-
-

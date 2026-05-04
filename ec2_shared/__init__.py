@@ -1,1 +1,1 @@
-"""Shared runtime helpers for detached EC2 agents."""
+"""Shared helpers for EC2-hosted Pian agents."""

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from datetime import datetime, timedelta, timezone
 
 from redis.asyncio import Redis
 from redis.asyncio import from_url as redis_from_url
+from redis.exceptions import RedisError
 
 logger = logging.getLogger("shelfie-grocery-agent.session-store")
 
@@ -62,17 +64,23 @@ class RedisSessionStore:
         if payload is None:
             return None
         _expires_at, messages = payload
-        return messages
+        return copy.deepcopy(messages)
 
     def _memory_set(self, session_id: str, messages: list[dict[str, str]]) -> None:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=self._ttl_seconds)
-        self._memory_store[session_id] = (expires_at, messages)
+        self._memory_store[session_id] = (expires_at, copy.deepcopy(messages))
 
     async def get_messages(self, session_id: str) -> list[dict[str, str]] | None:
         if self._use_memory_fallback:
             return self._memory_get(session_id)
 
-        raw = await self.client.get(self._key(session_id))
+        try:
+            raw = await self.client.get(self._key(session_id))
+        except (RedisError, RuntimeError, Exception) as exc:  # pragma: no cover - runtime infra dependent
+            logger.warning("Redis read failed, switching to in-memory fallback: %s", exc)
+            self._use_memory_fallback = True
+            return self._memory_get(session_id)
+
         if not raw:
             return None
         return json.loads(raw)
@@ -83,11 +91,21 @@ class RedisSessionStore:
             return
 
         payload = json.dumps(messages, ensure_ascii=True)
-        await self.client.set(self._key(session_id), payload, ex=self._ttl_seconds)
+        try:
+            await self.client.set(self._key(session_id), payload, ex=self._ttl_seconds)
+        except (RedisError, RuntimeError, Exception) as exc:  # pragma: no cover - runtime infra dependent
+            logger.warning("Redis write failed, switching to in-memory fallback: %s", exc)
+            self._use_memory_fallback = True
+            self._memory_set(session_id, messages)
 
     async def clear_messages(self, session_id: str) -> None:
         if self._use_memory_fallback:
             self._memory_store.pop(session_id, None)
             return
 
-        await self.client.delete(self._key(session_id))
+        try:
+            await self.client.delete(self._key(session_id))
+        except (RedisError, RuntimeError, Exception) as exc:  # pragma: no cover - runtime infra dependent
+            logger.warning("Redis delete failed, switching to in-memory fallback: %s", exc)
+            self._use_memory_fallback = True
+            self._memory_store.pop(session_id, None)

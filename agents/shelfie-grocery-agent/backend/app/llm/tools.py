@@ -1,6 +1,6 @@
 import ast
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.tools import tool
 
@@ -43,7 +43,7 @@ def calculate(expression: str) -> str:
     try:
         parsed = ast.parse(expression, mode="eval")
         result = _evaluate_ast(parsed)
-    except Exception as exc:
+    except (SyntaxError, ValueError, ZeroDivisionError, OverflowError) as exc:
         return f"Could not calculate `{expression}`: {exc}"
 
     if result.is_integer():
@@ -56,11 +56,10 @@ def get_current_datetime(timezone: str = "UTC") -> str:
     """Return current date-time in a timezone, for example UTC or Asia/Calcutta."""
     try:
         now = datetime.now(ZoneInfo(timezone))
-    except Exception:
+    except ZoneInfoNotFoundError:
         now = datetime.now(ZoneInfo("UTC"))
         timezone = "UTC"
     return now.strftime(f"%Y-%m-%d %H:%M:%S ({timezone})")
 
 
 AGENT_TOOLS = [calculate, get_current_datetime]
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,6 +25,7 @@ class MongoHistoryStore:
         self._collection: AsyncIOMotorCollection | None = None
         self._fallback_path = Path(__file__).resolve().parents[2] / "runtime_data" / "history_store.json"
         self._use_file_fallback = False
+        self._fallback_lock = threading.Lock()
 
     @property
     def collection(self) -> AsyncIOMotorCollection:
@@ -37,6 +39,7 @@ class MongoHistoryStore:
             self._collection = self._client[self._db_name][self._collection_name]
             await self._client.admin.command("ping")
             await self.collection.create_index([("session_id", 1), ("created_at", 1)])
+            await self.collection.create_index([("user_id", 1), ("created_at", 1)])
             self._use_file_fallback = False
         except Exception as exc:  # pragma: no cover - depends on runtime infra
             logger.warning("MongoDB unavailable, using file-backed history store: %s", exc)
@@ -96,26 +99,27 @@ class MongoHistoryStore:
         }
 
         if self._use_file_fallback:
-            payload = self._read_fallback()
-            payload["messages"].append(
-                {
+            with self._fallback_lock:
+                payload = self._read_fallback()
+                payload["messages"].append(
+                    {
+                        "session_id": session_id,
+                        "user_id": user_id,
+                        "role": role,
+                        "content": content,
+                        "metadata": metadata or {},
+                        "created_at_iso": created_at.isoformat(),
+                    }
+                )
+                payload["sessions"][session_id] = {
                     "session_id": session_id,
                     "user_id": user_id,
-                    "role": role,
-                    "content": content,
-                    "metadata": metadata or {},
-                    "created_at_iso": created_at.isoformat(),
+                    "last_message": content,
+                    "last_role": role,
+                    "last_updated_iso": created_at.isoformat(),
+                    "message_count": int(payload["sessions"].get(session_id, {}).get("message_count", 0)) + 1,
                 }
-            )
-            payload["sessions"][session_id] = {
-                "session_id": session_id,
-                "user_id": user_id,
-                "last_message": content,
-                "last_role": role,
-                "last_updated_iso": created_at.isoformat(),
-                "message_count": int(payload["sessions"].get(session_id, {}).get("message_count", 0)) + 1,
-            }
-            self._write_fallback(payload)
+                self._write_fallback(payload)
             return
 
         await self.collection.insert_one(doc)
@@ -198,10 +202,11 @@ class MongoHistoryStore:
 
     async def clear_session(self, session_id: str) -> None:
         if self._use_file_fallback:
-            payload = self._read_fallback()
-            payload["messages"] = [d for d in payload["messages"] if d.get("session_id") != session_id]
-            payload["sessions"].pop(session_id, None)
-            self._write_fallback(payload)
+            with self._fallback_lock:
+                payload = self._read_fallback()
+                payload["messages"] = [d for d in payload["messages"] if d.get("session_id") != session_id]
+                payload["sessions"].pop(session_id, None)
+                self._write_fallback(payload)
             return
 
         await self.collection.delete_many({"session_id": session_id})

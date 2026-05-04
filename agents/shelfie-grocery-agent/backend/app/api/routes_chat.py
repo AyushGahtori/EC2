@@ -19,12 +19,15 @@ logger = logging.getLogger("shelfie-grocery-agent.routes-chat")
 async def chat(request: Request, payload: ChatRequest) -> ChatResponse:
     service = request.app.state.agent_service
     settings = request.app.state.settings
-    session_id = payload.session_id or str(uuid4())
+    session_id = (payload.session_id or "").strip()
+    if not session_id:
+        session_id = str(uuid4())
+    user_id = (payload.user_id or "").strip() or None
 
     try:
         assistant_message = await service.generate_reply(
             session_id=session_id,
-            user_id=payload.user_id,
+            user_id=user_id,
             user_message=payload.message,
         )
     except Exception as exc:

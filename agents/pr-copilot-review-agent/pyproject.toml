@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+skips = ["B101"]  # allow assert in tests
